@@ -1,5 +1,6 @@
 import React from 'react';
 import NavigationBar from './NavigationBar';
+import '../styles/theme.css';
 
 interface LayoutProps {
     children: React.ReactNode;
@@ -7,11 +8,11 @@ interface LayoutProps {
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
     return (
-        <div className="app-layout mobile-friendly">
-            <main className="content">
+        <div className="app-layout">
+            <NavigationBar />
+            <main className="page-content">
                 {children}
             </main>
-            <NavigationBar />
         </div>
     );
 };
