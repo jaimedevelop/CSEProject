@@ -1,123 +1,121 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import '../../styles/theme.css';
+import {
+    fetchLatestTelemetry,
+    metersToFeet,
+    type FetchState,
+    type TelemetryPacket,
+} from '../../services/telemetry';
 
-// ─── Mock Types ───────────────────────────────────────────────────────────────
+const POLL_INTERVAL = 10; // seconds
 
-interface Telemetry {
-    latitude: number;
-    longitude: number;
-    altitude: number;       // feet
-    battery: number;       // percent 0–100
-    signal: number;       // dBm (negative)
-    pressure: number;       // millibars
-    windGust: number;       // mph
-    stabilityIndex: number;       // 0–100 (higher = more stable)
-    timestamp: Date;
-    status: 'nominal' | 'warning' | 'critical';
+// ─── Display helpers ──────────────────────────────────────────────────────────
+
+/** Formats a number to `decimals` places, or returns '--' if null/undefined. */
+function fmt(val: number | null | undefined, decimals = 1): string {
+    if (val == null) return '--';
+    return val.toFixed(decimals);
 }
 
-interface Alert {
-    id: string;
-    level: 'warning' | 'danger' | 'info';
-    message: string;
+type Level = 'nominal' | 'warning' | 'critical' | 'unknown';
+
+function batteryLevel(v: number | null): Level {
+    if (v == null) return 'unknown';
+    if (v < 5) return 'critical';
+    if (v < 20) return 'warning';
+    return 'nominal';
+}
+function signalLevel(v: number | null): Level {
+    if (v == null) return 'unknown';
+    if (v < -110) return 'critical';
+    if (v < -95) return 'warning';
+    return 'nominal';
+}
+function windLevel(v: number | null): Level {
+    if (v == null) return 'unknown';
+    if (v > 40) return 'critical';
+    if (v > 25) return 'warning';
+    return 'nominal';
+}
+function altLevel(v: number | null): Level {
+    if (v == null) return 'unknown';
+    return v > 19000 ? 'warning' : 'nominal'; // ft threshold
+}
+function overallStatus(d: TelemetryPacket | null): 'nominal' | 'warning' | 'critical' | 'unknown' {
+    if (!d) return 'unknown';
+    const altFt = metersToFeet(d.altitude_m);
+    if ((d.rssi != null && d.rssi < -110)) return 'critical';
+    if (
+        altFt > 19000 ||
+        (d.wind_gust_mph != null && d.wind_gust_mph > 40) ||
+        (d.rssi != null && d.rssi < -95)
+    ) return 'warning';
+    return 'nominal';
 }
 
-// ─── Mock Data Helpers ────────────────────────────────────────────────────────
+// ─── Alerts ───────────────────────────────────────────────────────────────────
 
-const BASE: Telemetry = {
-    latitude: 33.4484,
-    longitude: -112.0740,
-    altitude: 18.2,
-    battery: 74,
-    signal: -88,
-    pressure: 1013.2,
-    windGust: 12,
-    stabilityIndex: 82,
-    timestamp: new Date(),
-    status: 'nominal',
-};
+interface Alert { id: string; level: 'warning' | 'danger' | 'info'; message: string; }
 
-function jitter(val: number, range: number) {
-    return parseFloat((val + (Math.random() - 0.5) * range).toFixed(2));
-}
-
-function generateTelemetry(prev: Telemetry): Telemetry {
-    const battery = parseFloat(Math.max(0, prev.battery - 0.05).toFixed(1));
-    const signal = jitter(prev.signal, 4);
-    const windGust = Math.max(0, jitter(prev.windGust, 5));
-    const stability = Math.min(100, Math.max(0, jitter(prev.stabilityIndex, 6)));
-    const pressure = jitter(prev.pressure, 0.3);
-
-    let status: Telemetry['status'] = 'nominal';
-    if (battery < 20 || signal < -110 || windGust > 40) status = 'warning';
-    if (battery < 5) status = 'critical';
-
-    return {
-        ...prev,
-        battery,
-        signal,
-        windGust,
-        stabilityIndex: stability,
-        pressure,
-        altitude: jitter(prev.altitude, 0.5),
-        timestamp: new Date(),
-        status,
-    };
-}
-
-function deriveAlerts(t: Telemetry): Alert[] {
+function deriveAlerts(d: TelemetryPacket): Alert[] {
     const alerts: Alert[] = [];
-    if (t.battery < 5) alerts.push({ id: 'bat-crit', level: 'danger', message: `CRITICAL: Battery at ${t.battery}% — auto-deflation imminent.` });
-    else if (t.battery < 20) alerts.push({ id: 'bat-warn', level: 'warning', message: `Battery low: ${t.battery}% — consider landing soon.` });
-    if (t.signal < -110) alerts.push({ id: 'sig-warn', level: 'warning', message: `Weak signal: ${t.signal} dBm — approaching loss-of-comms threshold.` });
-    if (t.windGust > 40) alerts.push({ id: 'wind-warn', level: 'danger', message: `Wind gusts exceed 40 mph (${t.windGust.toFixed(1)} mph) — deflation recommended.` });
-    if (t.pressure < 1009) alerts.push({ id: 'pres-warn', level: 'warning', message: `Low pressure: ${t.pressure} mb — storm conditions possible.` });
+    const altFt = metersToFeet(d.altitude_m);
+    if (d.rssi != null && d.rssi < -110)
+        alerts.push({ id: 'sig-crit', level: 'danger', message: `Signal critical: ${d.rssi} dBm — approaching loss-of-comms threshold.` });
+    else if (d.rssi != null && d.rssi < -95)
+        alerts.push({ id: 'sig-warn', level: 'warning', message: `Weak signal: ${d.rssi} dBm` });
+    if (d.wind_gust_mph != null && d.wind_gust_mph > 40)
+        alerts.push({ id: 'wind-warn', level: 'danger', message: `Wind gusts exceed 40 mph (${d.wind_gust_mph.toFixed(1)} mph) — deflation recommended.` });
+    if (d.pressure_hpa < 1009)
+        alerts.push({ id: 'pres-warn', level: 'warning', message: `Low pressure: ${d.pressure_hpa} hPa — storm conditions possible.` });
+    if (altFt > 19000)
+        alerts.push({ id: 'alt-warn', level: 'warning', message: `High altitude: ${altFt.toFixed(0)} ft` });
     return alerts;
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function TelemetryCard({
-    label, value, unit, level = 'nominal', children
-}: {
-    label: string; value: string | number; unit?: string;
-    level?: 'nominal' | 'warning' | 'critical'; children?: React.ReactNode;
+function TelemetryCard({ label, value, unit, level = 'nominal', children }: {
+    label: string; value: string; unit?: string;
+    level?: Level; children?: React.ReactNode;
 }) {
     return (
         <div className="card" style={{ minWidth: 140 }}>
             <div className="card-title">{label}</div>
             <div style={{ marginTop: 'var(--space-2)' }}>
                 <span className={`data-value status-${level}`}>{value}</span>
-                {unit && <span className="data-unit">{unit}</span>}
+                {unit && value !== '--' && <span className="data-unit">{unit}</span>}
             </div>
             {children}
         </div>
     );
 }
 
-function BatteryBar({ pct }: { pct: number }) {
-    const level = pct < 5 ? 'critical' : pct < 20 ? 'warning' : 'nominal';
+function BatteryBar({ pct }: { pct: number | null }) {
+    const level = batteryLevel(pct);
     return (
         <div className="progress-bar" style={{ marginTop: 'var(--space-2)' }}>
-            <div className={`progress-bar-fill ${level}`} style={{ width: `${pct}%` }} />
+            <div
+                className={`progress-bar-fill ${level}`}
+                style={{ width: pct != null ? `${pct}%` : '0%' }}
+            />
         </div>
     );
 }
 
-function StabilityMeter({ value }: { value: number }) {
-    const level = value < 30 ? 'critical' : value < 60 ? 'warning' : 'nominal';
+function StabilityPlaceholder() {
     return (
         <div className="card">
             <div className="card-title">Stability Index</div>
             <div style={{ marginTop: 'var(--space-2)', display: 'flex', alignItems: 'baseline', gap: 'var(--space-1)' }}>
-                <span className={`data-value status-${level}`}>{value.toFixed(0)}</span>
+                <span className="data-value status-unknown">--</span>
                 <span className="data-unit">/ 100</span>
             </div>
             <div className="progress-bar" style={{ marginTop: 'var(--space-3)' }}>
-                <div className={`progress-bar-fill ${level}`} style={{ width: `${value}%` }} />
+                <div className="progress-bar-fill nominal" style={{ width: '0%' }} />
             </div>
             <div className="data-label" style={{ marginTop: 'var(--space-2)' }}>
-                {value >= 60 ? 'Stable' : value >= 30 ? 'Moderate turbulence' : 'High turbulence'}
+                No data source yet
             </div>
         </div>
     );
@@ -133,9 +131,40 @@ function AlertBanner({ alert }: { alert: Alert }) {
     );
 }
 
+function ConnectionBanner({ state }: { state: FetchState['status'] }) {
+    if (state === 'ok') return null;
+    const msgs: Record<string, string> = {
+        loading: 'Connecting to backend…',
+        no_data: 'Backend reachable — waiting for first telemetry packet.',
+        error: 'Not receiving data — check that the backend and listener are running.',
+    };
+    return (
+        <div className="alert-banner alert-banner-warning">
+            <span>📡</span>
+            <span>{msgs[state] ?? 'Unknown connection state.'}</span>
+        </div>
+    );
+}
+
+function NextUpdateBar({ secondsLeft, total }: { secondsLeft: number; total: number }) {
+    const pct = ((total - secondsLeft) / total) * 100;
+    return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+            <span className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}>
+                Next update in {secondsLeft}s
+            </span>
+            <div className="progress-bar" style={{ flex: 1, height: 4 }}>
+                <div
+                    className="progress-bar-fill nominal"
+                    style={{ width: `${pct}%`, transition: 'width 1s linear' }}
+                />
+            </div>
+        </div>
+    );
+}
+
 function DeflationButton() {
     const [phase, setPhase] = useState<'idle' | 'confirm' | 'sending' | 'confirmed'>('idle');
-
     const handleClick = () => {
         if (phase === 'idle') return setPhase('confirm');
         if (phase === 'confirm') {
@@ -144,14 +173,12 @@ function DeflationButton() {
             setTimeout(() => setPhase('idle'), 6000);
         }
     };
-
     const labels = {
         idle: '🔴 Manual Deflation',
         confirm: '⚠️ Confirm Deflation?',
         sending: '📡 Sending Command…',
         confirmed: '✅ Descent Initiated',
     };
-
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
             <button
@@ -174,52 +201,63 @@ function DeflationButton() {
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
-    const [telemetry, setTelemetry] = useState<Telemetry>(BASE);
+    const [fetchState, setFetchState] = useState<FetchState>({ status: 'loading' });
+    const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+    const [countdown, setCountdown] = useState(POLL_INTERVAL);
     const [alerts, setAlerts] = useState<Alert[]>([]);
-    const [elapsed, setElapsed] = useState(0); // seconds since last update
 
-    // Telemetry updates every 10s per requirements
-    useEffect(() => {
-        const interval = setInterval(() => {
-            setTelemetry(prev => {
-                const next = generateTelemetry(prev);
-                setAlerts(deriveAlerts(next));
-                setElapsed(0);
-                return next;
-            });
-        }, 10_000);
-        return () => clearInterval(interval);
+    const data = fetchState.status === 'ok' ? fetchState.data : null;
+
+    const poll = useCallback(async () => {
+        const result = await fetchLatestTelemetry();
+        setFetchState(result);
+        if (result.status === 'ok') {
+            setLastUpdated(new Date());
+            setAlerts(deriveAlerts(result.data));
+        }
+        setCountdown(POLL_INTERVAL);
     }, []);
 
-    // Elapsed counter (for "last updated X seconds ago")
+    // Initial fetch + polling
     useEffect(() => {
-        const tick = setInterval(() => setElapsed(e => e + 1), 1000);
+        poll();
+        const interval = setInterval(poll, POLL_INTERVAL * 1000);
+        return () => clearInterval(interval);
+    }, [poll]);
+
+    // Countdown ticker
+    useEffect(() => {
+        const tick = setInterval(() => setCountdown(c => Math.max(0, c - 1)), 1000);
         return () => clearInterval(tick);
     }, []);
 
-    const batLevel = telemetry.battery < 5 ? 'critical' : telemetry.battery < 20 ? 'warning' : 'nominal';
-    const sigLevel = telemetry.signal < -110 ? 'critical' : telemetry.signal < -95 ? 'warning' : 'nominal';
-    const windLevel = telemetry.windGust > 40 ? 'critical' : telemetry.windGust > 25 ? 'warning' : 'nominal';
-    const altLevel = telemetry.altitude > 19 ? 'warning' : 'nominal';
+    const status = overallStatus(data);
+    const altFt = data ? metersToFeet(data.altitude_m) : null;
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', maxWidth: 1200 }}>
 
-            {/* ── Topbar Status ── */}
+            {/* ── Topbar ── */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                    <span className="live-dot" />
+                    <span className={fetchState.status === 'ok' ? 'live-dot' : 'live-dot inactive'} />
                     <span style={{ fontWeight: 'var(--font-semi)', fontSize: 'var(--text-lg)' }}>
                         Balloon Dashboard
                     </span>
-                    <span className={`badge badge-${telemetry.status === 'nominal' ? 'success' : telemetry.status === 'warning' ? 'warning' : 'danger'}`}>
-                        {telemetry.status.toUpperCase()}
+                    <span className={`badge badge-${status === 'nominal' ? 'success' : status === 'warning' ? 'warning' : status === 'critical' ? 'danger' : 'muted'}`}>
+                        {status.toUpperCase()}
                     </span>
                 </div>
                 <span className="text-muted text-sm">
-                    Last update: {elapsed}s ago · {telemetry.timestamp.toLocaleTimeString()}
+                    {lastUpdated ? `Last update: ${lastUpdated.toLocaleTimeString()}` : 'No data yet'}
                 </span>
             </div>
+
+            {/* ── Next update progress bar ── */}
+            <NextUpdateBar secondsLeft={countdown} total={POLL_INTERVAL} />
+
+            {/* ── Connection / no-data banner ── */}
+            <ConnectionBanner state={fetchState.status} />
 
             {/* ── Alert Banners ── */}
             {alerts.length > 0 && (
@@ -230,26 +268,24 @@ export default function Dashboard() {
 
             {/* ── Primary Telemetry Grid ── */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 'var(--space-4)' }}>
-                <TelemetryCard label="Altitude" value={telemetry.altitude.toFixed(1)} unit="ft" level={altLevel} />
-                <TelemetryCard label="Battery" value={telemetry.battery.toFixed(1)} unit="%" level={batLevel}>
-                    <BatteryBar pct={telemetry.battery} />
-                </TelemetryCard>
-                <TelemetryCard label="Signal" value={telemetry.signal.toFixed(0)} unit="dBm" level={sigLevel} />
-                <TelemetryCard label="Pressure" value={telemetry.pressure.toFixed(1)} unit="mb" />
-                <TelemetryCard label="Wind Gust" value={telemetry.windGust.toFixed(1)} unit="mph" level={windLevel} />
+                <TelemetryCard label="Altitude" value={fmt(altFt, 1)} unit="ft" level={altLevel(altFt)} />
+                <TelemetryCard label="Signal (RSSI)" value={fmt(data?.rssi, 0)} unit="dBm" level={signalLevel(data?.rssi ?? null)} />
+                <TelemetryCard label="Pressure" value={fmt(data?.pressure_hpa, 1)} unit="hPa" />
+                <TelemetryCard label="Wind Gust" value={fmt(data?.wind_gust_mph, 1)} unit="mph" level={windLevel(data?.wind_gust_mph ?? null)} />
+                <TelemetryCard label="Temperature" value={fmt(data?.temperature_c, 1)} unit="°C" />
             </div>
 
-            {/* ── Stability Index + Position ── */}
+            {/* ── Stability + GPS ── */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)' }}>
-                <StabilityMeter value={telemetry.stabilityIndex} />
+                <StabilityPlaceholder />
 
                 <div className="card">
                     <div className="card-title">GPS Position</div>
                     <div style={{ marginTop: 'var(--space-3)', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
                         {[
-                            { label: 'Latitude', val: `${telemetry.latitude.toFixed(6)}°` },
-                            { label: 'Longitude', val: `${telemetry.longitude.toFixed(6)}°` },
-                            { label: 'Altitude', val: `${telemetry.altitude.toFixed(1)} ft` },
+                            { label: 'Latitude', val: data ? `${data.latitude.toFixed(6)}°` : '--' },
+                            { label: 'Longitude', val: data ? `${data.longitude.toFixed(6)}°` : '--' },
+                            { label: 'Altitude', val: altFt != null ? `${altFt.toFixed(1)} ft` : '--' },
                         ].map(r => (
                             <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <span className="text-secondary text-sm">{r.label}</span>
@@ -257,13 +293,15 @@ export default function Dashboard() {
                             </div>
                         ))}
                         <div style={{ marginTop: 'var(--space-2)', paddingTop: 'var(--space-2)', borderTop: '1px solid var(--color-border)' }}>
-                            <span className="text-xs text-muted">Accuracy: ±20 ft · Updated every 10s</span>
+                            <span className="text-xs text-muted">
+                                {data?.source ? `Source: ${data.source}` : 'No source'} · Updated every {POLL_INTERVAL}s
+                            </span>
                         </div>
                     </div>
                 </div>
             </div>
 
-            {/* ── Manual Deflation ── */}
+            {/* ── Emergency Controls ── */}
             <div className="card" style={{ borderColor: 'var(--color-danger)', boxShadow: 'var(--shadow-glow-red)' }}>
                 <div className="card-title" style={{ color: 'var(--color-danger)', marginBottom: 'var(--space-3)' }}>
                     Emergency Controls
