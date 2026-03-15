@@ -114,4 +114,4 @@ dist-ssr
 *.local
 
 # Backend
-src/backend/venv/
+*venv

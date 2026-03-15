@@ -13,11 +13,12 @@ import time
 import requests
 import serial          # pip install pyserial
 import serial.tools.list_ports
+from datetime import datetime, timezone
 
 # =============================================================================
 # CONFIG — toggle SIM_MODE here, or set env var: SIM_MODE=1 python listener.py
 # =============================================================================
-SIM_MODE    = os.environ.get("SIM_MODE", "1") == "1"   # True = simulator
+SIM_MODE    = 0  # True = simulator
 SERIAL_PORT = os.environ.get("SERIAL_PORT", "")        # e.g. COM3 or /dev/ttyUSB0
 BAUD_RATE   = int(os.environ.get("BAUD_RATE", "115200"))
 API_URL     = os.environ.get("API_URL", "http://127.0.0.1:8000/telemetry")
@@ -29,50 +30,56 @@ def post_packet(packet: dict):
     try:
         resp = requests.post(API_URL, json=packet, timeout=5)
         resp.raise_for_status()
-        print(f"[listener] Posted packet → {resp.status_code} | alt={packet.get('altitude_m')}m")
+        print(f"[listener] Posted packet → {resp.status_code} | {packet}")
     except requests.RequestException as e:
         print(f"[listener] Failed to POST packet: {e}", file=sys.stderr)
 
 
 def parse_line(raw: str) -> dict | None:
     """
-    Parse a raw line from the serial port or simulator.
-
-    The simulator emits clean JSON, so this just does json.loads().
-    For the real RAK4630 (RUI3 firmware), the base station typically
-    prints lines like:
-        +EVT:RX_1, RSSI=-87, SNR=7.5, PLD=<hex or JSON string>
-    Adjust the parsing block below once you know your exact firmware output.
+    Parse a raw JSON line from the serial port and translate it 
+    into the legacy simulator format for the backend.
     """
     raw = raw.strip()
     if not raw:
         return None
 
-    # --- Simulator / already-JSON path ---
-    if raw.startswith("{"):
+    if raw.startswith("{") and raw.endswith("}"):
         try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            pass
+            raw_packet = json.loads(raw)
+            
+            # The u-blox GPS module sends coordinates as (degrees * 10^7)
+            # We divide by 10,000,000 to get standard decimal coordinates
+            lat_decimal = raw_packet.get("lat", 0) / 10000000.0
+            lon_decimal = raw_packet.get("lon", 0) / 10000000.0
+            
+            # The GPS altitude is in millimeters, convert to meters
+            alt_meters = raw_packet.get("alt", 0) / 1000.0
 
-    # --- RAK4630 RUI3 AT-command firmware path ---
-    # Example line: +EVT:RX_1, RSSI=-87, SNR=7.5, PLD={"lat":27.99,...}
-    if "+EVT" in raw and "PLD=" in raw:
-        try:
-            rssi, snr = None, None
-            if "RSSI=" in raw:
-                rssi = int(raw.split("RSSI=")[1].split(",")[0].strip())
-            if "SNR=" in raw:
-                snr = float(raw.split("SNR=")[1].split(",")[0].strip())
+            # Map the C++ keys to the Simulator keys
+            translated_packet = {
+                "timestamp":     datetime.now(timezone.utc).isoformat(),
+                "latitude":      lat_decimal,
+                "longitude":     lon_decimal,
+                "altitude_m":    alt_meters,
+                "temperature_c": raw_packet.get("tempC", 0.0),
+                "pressure_hpa":  raw_packet.get("pressure", 0.0),
+                "accel_x":       raw_packet.get("accelX", 0.0),
+                "accel_y":       raw_packet.get("accelY", 0.0),
+                "accel_z":       raw_packet.get("accelZ", 0.0),
+                "rssi":          raw_packet.get("rssi", 0),
+                "snr":           raw_packet.get("snr", 0.0),
+                "wind_gust_mph": 0.0,  # Dummy value to keep the frontend happy
+                "source":        "lora_radio"
+            }
+            
+            return translated_packet
 
-            payload_str = raw.split("PLD=")[1].strip()
-            packet = json.loads(payload_str)
-            packet.setdefault("rssi", rssi)
-            packet.setdefault("snr", snr)
-            packet.setdefault("source", "lora")
-            return packet
-        except (IndexError, json.JSONDecodeError, ValueError) as e:
-            print(f"[listener] Could not parse RAK4630 line: {e}\n  raw: {raw}", file=sys.stderr)
+        except json.JSONDecodeError as e:
+            print(f"[listener] JSON decode error: {e}\n  raw: {raw}", file=sys.stderr)
+    else:
+        # Print non-JSON debug statements from the C++ code to the console
+        print(f"[ground_station_log] {raw}")
 
     return None
 
@@ -104,18 +111,7 @@ def run_sim_mode():
 # REAL MODE — read from RAK4630 base station over USB serial
 # ---------------------------------------------------------------------------
 def auto_detect_port() -> str:
-    """Try to find the RAK4630 USB serial port automatically."""
-    ports = serial.tools.list_ports.comports()
-    for p in ports:
-        desc = (p.description or "").lower()
-        if "rak" in desc or "cp210" in desc or "ch340" in desc or "ftdi" in desc:
-            print(f"[listener] Auto-detected port: {p.device} ({p.description})")
-            return p.device
-    # Fall back to first available port
-    if ports:
-        print(f"[listener] Using first available port: {ports[0].device}")
-        return ports[0].device
-    return ""
+    return "COM9"
 
 def run_serial_mode():
     port = SERIAL_PORT or auto_detect_port()
