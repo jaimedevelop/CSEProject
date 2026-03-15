@@ -61,7 +61,7 @@ const MOCK_LOG: FlightLogEntry[] = [
     makeEntry('e11', 30, 'telemetry', {}),
     makeEntry('e12', 20, 'alert', { battery: 18, pressure: 1006, note: 'Pressure drop + low battery' }),
     makeEntry('e13', 15, 'deflation', { battery: 14, trigger: 'manual', note: 'Operator initiated manual deflation' }),
-    makeEntry('e14', 14, 'telemetry', { altitude: 12.0, note: 'Descent confirmed' }),
+    makeEntry('e14', 14, 'alert', { altitude: 30.0, note: 'Altitude threshold surpassed. Initiating descent.' }),
     makeEntry('e15', 13, 'telemetry', { altitude: 6.5 }),
     makeEntry('e16', 12, 'telemetry', { altitude: 1.2 }),
     makeEntry('e17', 11, 'landing', { altitude: 0, battery: 13, note: 'Landing detected · Buzzer + strobe active', trigger: null }),
