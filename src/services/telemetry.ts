@@ -15,15 +15,15 @@ export interface TelemetryPacket {
     accel_z: number;
     rssi: number | null;
     snr: number | null;
-    wind_gust_mph: number | null;
+    wind_gust_mph: number | null; // kept for simulator compat; may be null on real hardware
     source: string | null;
 }
 
 export type FetchState =
     | { status: 'loading' }
     | { status: 'ok'; data: TelemetryPacket }
-    | { status: 'no_data' }       // 404 — backend up, no packet yet
-    | { status: 'error' };        // network / server error
+    | { status: 'no_data' }   // 404 — backend up, no packet yet
+    | { status: 'error' };    // network / server error
 
 export async function fetchLatestTelemetry(): Promise<FetchState> {
     try {
@@ -37,5 +37,33 @@ export async function fetchLatestTelemetry(): Promise<FetchState> {
     }
 }
 
-// Utility conversions — keep transforms out of components
+/** Fetch all packets for a given date (YYYY-MM-DD). Returns [] on any error. */
+export async function fetchTelemetryHistory(date: string): Promise<TelemetryPacket[]> {
+    try {
+        const res = await fetch(`${API_BASE}/telemetry/history?date=${date}`, { cache: 'no-store' });
+        if (!res.ok) return [];
+        return await res.json();
+    } catch {
+        return [];
+    }
+}
+
+/** Returns today's date as YYYY-MM-DD in local time. */
+export function todayDateString(): string {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// ─── Unit conversions ─────────────────────────────────────────────────────────
+
 export const metersToFeet = (m: number) => m * 3.28084;
+
+/**
+ * Derives a tilt angle (°) from accelerometer axes.
+ * When the device is flat and upright, accel_z ≈ 9.8 m/s².
+ * Tilt away from vertical increases the XY component.
+ */
+export function tiltAngle(ax: number, ay: number, az: number): number {
+    const xy = Math.sqrt(ax ** 2 + ay ** 2);
+    return Math.atan2(xy, Math.abs(az)) * (180 / Math.PI);
+}

@@ -3,15 +3,15 @@ import '../../styles/theme.css';
 import {
     fetchLatestTelemetry,
     metersToFeet,
+    tiltAngle,
     type FetchState,
     type TelemetryPacket,
 } from '../../services/telemetry';
 
-const POLL_INTERVAL = 10; // seconds
+const POLL_INTERVAL = 30; // seconds — 10 for sim testing, 30 for real hardware
 
 // ─── Display helpers ──────────────────────────────────────────────────────────
 
-/** Formats a number to `decimals` places, or returns '--' if null/undefined. */
 function fmt(val: number | null | undefined, decimals = 1): string {
     if (val == null) return '--';
     return val.toFixed(decimals);
@@ -19,36 +19,42 @@ function fmt(val: number | null | undefined, decimals = 1): string {
 
 type Level = 'nominal' | 'warning' | 'critical' | 'unknown';
 
-function batteryLevel(v: number | null): Level {
-    if (v == null) return 'unknown';
-    if (v < 5) return 'critical';
-    if (v < 20) return 'warning';
-    return 'nominal';
-}
 function signalLevel(v: number | null): Level {
     if (v == null) return 'unknown';
     if (v < -110) return 'critical';
     if (v < -95) return 'warning';
     return 'nominal';
 }
-function windLevel(v: number | null): Level {
+
+function snrLevel(v: number | null): Level {
     if (v == null) return 'unknown';
-    if (v > 40) return 'critical';
-    if (v > 25) return 'warning';
+    if (v < 0) return 'critical';
+    if (v < 5) return 'warning';
     return 'nominal';
 }
+
 function altLevel(v: number | null): Level {
     if (v == null) return 'unknown';
-    return v > 19000 ? 'warning' : 'nominal'; // ft threshold
+    return v > 19000 ? 'warning' : 'nominal'; // ft
 }
+
+function tiltLevel(deg: number | null): Level {
+    if (deg == null) return 'unknown';
+    if (deg > 45) return 'critical';
+    if (deg > 20) return 'warning';
+    return 'nominal';
+}
+
 function overallStatus(d: TelemetryPacket | null): 'nominal' | 'warning' | 'critical' | 'unknown' {
     if (!d) return 'unknown';
     const altFt = metersToFeet(d.altitude_m);
-    if ((d.rssi != null && d.rssi < -110)) return 'critical';
+    const tilt = tiltAngle(d.accel_x, d.accel_y, d.accel_z);
+    if (d.rssi != null && d.rssi < -110) return 'critical';
     if (
         altFt > 19000 ||
-        (d.wind_gust_mph != null && d.wind_gust_mph > 40) ||
-        (d.rssi != null && d.rssi < -95)
+        tilt > 45 ||
+        (d.rssi != null && d.rssi < -95) ||
+        (d.snr != null && d.snr < 0)
     ) return 'warning';
     return 'nominal';
 }
@@ -60,16 +66,30 @@ interface Alert { id: string; level: 'warning' | 'danger' | 'info'; message: str
 function deriveAlerts(d: TelemetryPacket): Alert[] {
     const alerts: Alert[] = [];
     const altFt = metersToFeet(d.altitude_m);
+    const tilt = tiltAngle(d.accel_x, d.accel_y, d.accel_z);
+
     if (d.rssi != null && d.rssi < -110)
         alerts.push({ id: 'sig-crit', level: 'danger', message: `Signal critical: ${d.rssi} dBm — approaching loss-of-comms threshold.` });
     else if (d.rssi != null && d.rssi < -95)
         alerts.push({ id: 'sig-warn', level: 'warning', message: `Weak signal: ${d.rssi} dBm` });
-    if (d.wind_gust_mph != null && d.wind_gust_mph > 40)
-        alerts.push({ id: 'wind-warn', level: 'danger', message: `Wind gusts exceed 40 mph (${d.wind_gust_mph.toFixed(1)} mph) — deflation recommended.` });
-    if (d.pressure_hpa < 1009)
-        alerts.push({ id: 'pres-warn', level: 'warning', message: `Low pressure: ${d.pressure_hpa} hPa — storm conditions possible.` });
+
+    if (d.snr != null && d.snr < 0)
+        alerts.push({ id: 'snr-warn', level: 'warning', message: `Negative SNR: ${d.snr} dB — packet loss likely.` });
+
+    if (d.pressure_hpa < 890)
+        alerts.push({ id: 'pres-warn', level: 'warning', message: `Low pressure: ${d.pressure_hpa.toFixed(1)} hPa — high altitude or storm conditions.` });
+
     if (altFt > 19000)
         alerts.push({ id: 'alt-warn', level: 'warning', message: `High altitude: ${altFt.toFixed(0)} ft` });
+
+    if (tilt > 45)
+        alerts.push({ id: 'tilt-crit', level: 'danger', message: `Extreme tilt: ${tilt.toFixed(1)}° — payload may be tumbling.` });
+    else if (tilt > 20)
+        alerts.push({ id: 'tilt-warn', level: 'warning', message: `Elevated tilt: ${tilt.toFixed(1)}°` });
+
+    if (d.wind_gust_mph != null && d.wind_gust_mph > 40)
+        alerts.push({ id: 'wind-warn', level: 'danger', message: `Wind gusts exceed 40 mph (${d.wind_gust_mph.toFixed(1)} mph) — deflation recommended.` });
+
     return alerts;
 }
 
@@ -91,31 +111,23 @@ function TelemetryCard({ label, value, unit, level = 'nominal', children }: {
     );
 }
 
-function BatteryBar({ pct }: { pct: number | null }) {
-    const level = batteryLevel(pct);
+function AccelCard({ ax, ay, az }: { ax: number | null; ay: number | null; az: number | null }) {
+    const tilt = (ax != null && ay != null && az != null) ? tiltAngle(ax, ay, az) : null;
+    const level = tiltLevel(tilt);
     return (
-        <div className="progress-bar" style={{ marginTop: 'var(--space-2)' }}>
-            <div
-                className={`progress-bar-fill ${level}`}
-                style={{ width: pct != null ? `${pct}%` : '0%' }}
-            />
-        </div>
-    );
-}
-
-function StabilityPlaceholder() {
-    return (
-        <div className="card">
-            <div className="card-title">Stability Index</div>
-            <div style={{ marginTop: 'var(--space-2)', display: 'flex', alignItems: 'baseline', gap: 'var(--space-1)' }}>
-                <span className="data-value status-unknown">--</span>
-                <span className="data-unit">/ 100</span>
+        <div className="card" style={{ minWidth: 140 }}>
+            <div className="card-title">Orientation</div>
+            <div style={{ marginTop: 'var(--space-2)' }}>
+                <span className={`data-value status-${level}`}>{fmt(tilt, 1)}</span>
+                {tilt != null && <span className="data-unit">° tilt</span>}
             </div>
-            <div className="progress-bar" style={{ marginTop: 'var(--space-3)' }}>
-                <div className="progress-bar-fill nominal" style={{ width: '0%' }} />
-            </div>
-            <div className="data-label" style={{ marginTop: 'var(--space-2)' }}>
-                No data source yet
+            <div style={{ marginTop: 'var(--space-2)', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {[['X', ax], ['Y', ay], ['Z', az]].map(([axis, val]) => (
+                    <div key={String(axis)} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span className="text-xs text-muted">Accel {axis}</span>
+                        <span className="font-mono text-xs">{fmt(val as number | null, 2)} m/s²</span>
+                    </div>
+                ))}
             </div>
         </div>
     );
@@ -218,14 +230,12 @@ export default function Dashboard() {
         setCountdown(POLL_INTERVAL);
     }, []);
 
-    // Initial fetch + polling
     useEffect(() => {
         poll();
         const interval = setInterval(poll, POLL_INTERVAL * 1000);
         return () => clearInterval(interval);
     }, [poll]);
 
-    // Countdown ticker
     useEffect(() => {
         const tick = setInterval(() => setCountdown(c => Math.max(0, c - 1)), 1000);
         return () => clearInterval(tick);
@@ -270,14 +280,23 @@ export default function Dashboard() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 'var(--space-4)' }}>
                 <TelemetryCard label="Altitude" value={fmt(altFt, 1)} unit="ft" level={altLevel(altFt)} />
                 <TelemetryCard label="Signal (RSSI)" value={fmt(data?.rssi, 0)} unit="dBm" level={signalLevel(data?.rssi ?? null)} />
+                <TelemetryCard label="SNR" value={fmt(data?.snr, 1)} unit="dB" level={snrLevel(data?.snr ?? null)} />
                 <TelemetryCard label="Pressure" value={fmt(data?.pressure_hpa, 1)} unit="hPa" />
-                <TelemetryCard label="Wind Gust" value={fmt(data?.wind_gust_mph, 1)} unit="mph" level={windLevel(data?.wind_gust_mph ?? null)} />
                 <TelemetryCard label="Temperature" value={fmt(data?.temperature_c, 1)} unit="°C" />
+                {/* wind_gust_mph shown only when present (simulator only) */}
+                {data?.wind_gust_mph != null && (
+                    <TelemetryCard
+                        label="Wind Gust"
+                        value={fmt(data.wind_gust_mph, 1)}
+                        unit="mph"
+                        level={data.wind_gust_mph > 40 ? 'critical' : data.wind_gust_mph > 25 ? 'warning' : 'nominal'}
+                    />
+                )}
             </div>
 
-            {/* ── Stability + GPS ── */}
+            {/* ── Orientation + GPS ── */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)' }}>
-                <StabilityPlaceholder />
+                <AccelCard ax={data?.accel_x ?? null} ay={data?.accel_y ?? null} az={data?.accel_z ?? null} />
 
                 <div className="card">
                     <div className="card-title">GPS Position</div>
