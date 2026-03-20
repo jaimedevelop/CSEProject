@@ -24,6 +24,14 @@ BAUD_RATE   = int(os.environ.get("BAUD_RATE", "115200"))
 API_URL     = os.environ.get("API_URL", "http://127.0.0.1:8000/telemetry")
 # =============================================================================
 
+DET_REASON_LABELS = {
+    0: "NONE",
+    1: "MANUAL_POP",
+    2: "LOW_BATTERY",
+    3: "GEOFENCE_EXIT",
+    4: "ALTITUDE_DROP",
+}
+
 
 def post_packet(packet: dict):
     """Send a telemetry packet to the FastAPI backend."""
@@ -37,8 +45,8 @@ def post_packet(packet: dict):
 
 def parse_line(raw: str) -> dict | None:
     """
-    Parse a raw JSON line from the serial port and translate it 
-    into the legacy simulator format for the backend.
+    Parse a raw JSON line from the serial port and normalize it to
+    the backend telemetry schema.
     """
     raw = raw.strip()
     if not raw:
@@ -47,29 +55,45 @@ def parse_line(raw: str) -> dict | None:
     if raw.startswith("{") and raw.endswith("}"):
         try:
             raw_packet = json.loads(raw)
-            
+
             # The u-blox GPS module sends coordinates as (degrees * 10^7)
             # We divide by 10,000,000 to get standard decimal coordinates
-            lat_decimal = raw_packet.get("lat", 0) / 10000000.0
-            lon_decimal = raw_packet.get("lon", 0) / 10000000.0
-            
-            # The GPS altitude is in millimeters, convert to meters
-            alt_meters = raw_packet.get("alt", 0) / 1000.0
+            lat_decimal = float(raw_packet.get("lat", 0)) / 10000000.0
+            lon_decimal = float(raw_packet.get("lon", 0)) / 10000000.0
 
-            # Map the C++ keys to the Simulator keys
+            # The GPS altitude is in millimeters, convert to meters
+            alt_meters = float(raw_packet.get("alt", 0)) / 1000.0
+
+            # speed is mm/s and heading is degrees * 1e5
+            speed_mps = float(raw_packet.get("speed", 0)) / 1000.0
+            heading_deg = float(raw_packet.get("heading", 0)) / 100000.0
+
+            det_reason = int(raw_packet.get("detReason", 0))
+            det_reason_text = DET_REASON_LABELS.get(det_reason, f"UNKNOWN_{det_reason}")
+
+            # Map C++ payload keys to backend API keys
             translated_packet = {
                 "timestamp":     datetime.now(timezone.utc).isoformat(),
                 "latitude":      lat_decimal,
                 "longitude":     lon_decimal,
                 "altitude_m":    alt_meters,
                 "temperature_c": raw_packet.get("tempC", 0.0),
+                "humidity_pct":  raw_packet.get("humidity"),
                 "pressure_hpa":  raw_packet.get("pressure", 0.0),
                 "accel_x":       raw_packet.get("accelX", 0.0),
                 "accel_y":       raw_packet.get("accelY", 0.0),
                 "accel_z":       raw_packet.get("accelZ", 0.0),
                 "rssi":          raw_packet.get("rssi", 0),
                 "snr":           raw_packet.get("snr", 0.0),
-                "wind_gust_mph": 0.0,  # Dummy value to keep the frontend happy
+                "speed_mps":     speed_mps,
+                "heading_deg":   heading_deg,
+                "satellites_in_view": raw_packet.get("siv"),
+                "battery_pct":   raw_packet.get("batt"),
+                "stability_index": raw_packet.get("stability"),
+                "det":           bool(raw_packet.get("det", False)),
+                "det_reason":    det_reason,
+                "det_reason_text": det_reason_text,
+                "wind_gust_mph": None,  # simulator-only field
                 "source":        "lora_radio"
             }
             

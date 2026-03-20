@@ -6,7 +6,7 @@ import {
     type TelemetryPacket,
 } from '../../services/telemetry';
 
-const POLL_INTERVAL = 30_000; // ms — match Dashboard
+const POLL_INTERVAL = 1_000; // ms — set to match packet cadence
 const MAX_TRAIL = 60;         // keep last N positions in trail
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -209,8 +209,11 @@ export default function Map() {
         const newPos: LatLng = { lat: p.latitude, lng: p.longitude };
         const newAlt = metersToFeet(p.altitude_m);
 
-        // Compute heading from previous position if available
-        if (prevPos.current) {
+        // Prefer onboard heading when available; fallback to track-derived heading.
+        if (p.heading_deg != null) {
+            const wrapped = ((p.heading_deg % 360) + 360) % 360;
+            setHeading(wrapped);
+        } else if (prevPos.current) {
             const dLat = newPos.lat - prevPos.current.lat;
             const dLng = newPos.lng - prevPos.current.lng;
             if (Math.abs(dLat) + Math.abs(dLng) > 1e-7) {

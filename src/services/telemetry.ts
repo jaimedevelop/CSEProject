@@ -9,12 +9,21 @@ export interface TelemetryPacket {
     longitude: number;
     altitude_m: number;
     temperature_c: number;
+    humidity_pct?: number | null;
     pressure_hpa: number;
     accel_x: number;
     accel_y: number;
     accel_z: number;
     rssi: number | null;
     snr: number | null;
+    speed_mps?: number | null;
+    heading_deg?: number | null;
+    satellites_in_view?: number | null;
+    battery_pct?: number | null;
+    stability_index?: number | null;
+    det?: boolean | null;
+    det_reason?: number | null;
+    det_reason_text?: string | null;
     wind_gust_mph: number | null; // kept for simulator compat; may be null on real hardware
     source: string | null;
 }
@@ -42,7 +51,17 @@ export async function fetchTelemetryHistory(date: string): Promise<TelemetryPack
     try {
         const res = await fetch(`${API_BASE}/telemetry/history?date=${date}`, { cache: 'no-store' });
         if (!res.ok) return [];
-        return await res.json();
+        const data: unknown = await res.json();
+        if (Array.isArray(data)) {
+            return data as TelemetryPacket[];
+        }
+
+        if (data && typeof data === 'object' && 'packets' in data) {
+            const packets = (data as { packets?: unknown }).packets;
+            return Array.isArray(packets) ? (packets as TelemetryPacket[]) : [];
+        }
+
+        return [];
     } catch {
         return [];
     }

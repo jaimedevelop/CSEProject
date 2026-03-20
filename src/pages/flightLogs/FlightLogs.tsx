@@ -1,10 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import '../../styles/theme.css';
 import {
     fetchTelemetryHistory,
     metersToFeet,
     tiltAngle,
-    todayDateString,
     type TelemetryPacket,
 } from '../../services/telemetry';
 
@@ -22,7 +21,7 @@ function exportCSV(packets: TelemetryPacket[]) {
     const headers = [
         'timestamp', 'latitude', 'longitude', 'altitude_m', 'altitude_ft',
         'temperature_c', 'pressure_hpa',
-        'accel_x', 'accel_y', 'accel_z', 'tilt_deg',
+        'accel_x', 'accel_y', 'accel_z', 'tilt_deg', 'stability_index',
         'rssi', 'snr', 'wind_gust_mph', 'source',
     ];
     const rows = packets.map(p => [
@@ -37,6 +36,7 @@ function exportCSV(packets: TelemetryPacket[]) {
         p.accel_y.toFixed(3),
         p.accel_z.toFixed(3),
         tiltAngle(p.accel_x, p.accel_y, p.accel_z).toFixed(1),
+        p.stability_index != null ? p.stability_index.toFixed(2) : '',
         p.rssi ?? '',
         p.snr ?? '',
         p.wind_gust_mph ?? '',
@@ -71,7 +71,7 @@ function SummaryCard({ label, value, unit, sub }: { label: string; value: string
 // ─── FlightLogs ───────────────────────────────────────────────────────────────
 
 export default function FlightLogs() {
-    const [date, setDate] = useState(todayDateString());
+    const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
     const [packets, setPackets] = useState<TelemetryPacket[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
@@ -79,19 +79,32 @@ export default function FlightLogs() {
     const [expanded, setExpanded] = useState<string | null>(null);
 
     useEffect(() => {
-        let cancelled = false;
-        setLoading(true);
+        setDate(new Date().toISOString().slice(0, 10));
+    }, []);
+
+    const loadHistory = useCallback(async (withLoading: boolean) => {
+        if (withLoading) setLoading(true);
         setError(false);
-        fetchTelemetryHistory(date).then(data => {
-            if (cancelled) return;
+        try {
+            const data = await fetchTelemetryHistory(date);
             setPackets(data);
-            setLoading(false);
-            if (data.length === 0) setError(false); // empty is valid
-        }).catch(() => {
-            if (!cancelled) { setError(true); setLoading(false); }
-        });
-        return () => { cancelled = true; };
+            if (withLoading) setLoading(false);
+        } catch {
+            setError(true);
+            if (withLoading) setLoading(false);
+        }
     }, [date]);
+
+    useEffect(() => {
+        loadHistory(true);
+    }, [loadHistory]);
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            loadHistory(false);
+        }, 1000);
+        return () => clearInterval(interval);
+    }, [loadHistory]);
 
     const filtered = useMemo(() => {
         const q = search.toLowerCase();
@@ -192,7 +205,7 @@ export default function FlightLogs() {
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)' }}>
                         <thead>
                             <tr style={{ background: 'var(--color-bg-panel)', borderBottom: '1px solid var(--color-border)' }}>
-                                {['Time', 'Alt (ft)', 'Temp (°C)', 'Pressure', 'Tilt (°)', 'RSSI', 'SNR', 'Lat', 'Lng', 'Source'].map(h => (
+                                {['Time', 'Alt (ft)', 'Temp (°C)', 'Pressure', 'Tilt (°)', 'Stability', 'RSSI', 'SNR', 'Lat', 'Lng', 'Source'].map(h => (
                                     <th key={h} style={{
                                         padding: 'var(--space-2) var(--space-3)',
                                         textAlign: 'left',
@@ -208,7 +221,7 @@ export default function FlightLogs() {
                         <tbody>
                             {filtered.length === 0 && !loading ? (
                                 <tr>
-                                    <td colSpan={10} style={{ padding: 'var(--space-8)', textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                                    <td colSpan={11} style={{ padding: 'var(--space-8)', textAlign: 'center', color: 'var(--color-text-muted)' }}>
                                         No packets match the current filter.
                                     </td>
                                 </tr>
@@ -244,6 +257,9 @@ export default function FlightLogs() {
                                             <td style={{ padding: 'var(--space-2) var(--space-3)', color: tiltWarn ? 'var(--color-warning)' : 'var(--color-text-primary)' }}>
                                                 {tilt.toFixed(1)}
                                             </td>
+                                            <td style={{ padding: 'var(--space-2) var(--space-3)' }}>
+                                                {p.stability_index != null ? p.stability_index.toFixed(2) : '--'}
+                                            </td>
                                             <td style={{ padding: 'var(--space-2) var(--space-3)', color: rssiWarn ? 'var(--color-warning)' : 'var(--color-text-primary)' }}>
                                                 {p.rssi ?? '--'}
                                             </td>
@@ -260,7 +276,7 @@ export default function FlightLogs() {
                                         {/* Expanded detail row */}
                                         {isExpanded && (
                                             <tr key={`${key}-exp`} style={{ background: 'var(--color-bg-panel)', borderBottom: '1px solid var(--color-border)' }}>
-                                                <td colSpan={10} style={{ padding: 'var(--space-3) var(--space-4)' }}>
+                                                <td colSpan={11} style={{ padding: 'var(--space-3) var(--space-4)' }}>
                                                     <div style={{ display: 'flex', gap: 'var(--space-6)', flexWrap: 'wrap', fontSize: 'var(--text-xs)' }}>
                                                         {[
                                                             { k: 'Timestamp', v: p.timestamp },
@@ -273,6 +289,7 @@ export default function FlightLogs() {
                                                             { k: 'Accel Y', v: `${p.accel_y.toFixed(3)} m/s²` },
                                                             { k: 'Accel Z', v: `${p.accel_z.toFixed(3)} m/s²` },
                                                             { k: 'Tilt', v: `${tilt.toFixed(1)}°` },
+                                                            { k: 'Stability', v: p.stability_index != null ? p.stability_index.toFixed(2) : '—' },
                                                             { k: 'RSSI', v: p.rssi != null ? `${p.rssi} dBm` : '—' },
                                                             { k: 'SNR', v: p.snr != null ? `${p.snr.toFixed(1)} dB` : '—' },
                                                             { k: 'Source', v: p.source ?? '—' },

@@ -24,6 +24,19 @@ os.makedirs(FLIGHT_LOGS_DIR, exist_ok=True)
 latest_telemetry: Optional[dict] = None
 
 
+def _packet_log_date(packet: dict) -> str:
+    """Choose the log file date using packet timestamp when possible."""
+    ts = packet.get("timestamp")
+    if isinstance(ts, str) and ts:
+        try:
+            # Accept both ...+00:00 and ...Z timestamp forms.
+            normalized = ts.replace("Z", "+00:00")
+            return datetime.fromisoformat(normalized).date().isoformat()
+        except ValueError:
+            pass
+    return datetime.utcnow().strftime("%Y-%m-%d")
+
+
 # -------------------------------------------------------------------
 # Pydantic model — update fields to match your actual RAK4630 payload
 # -------------------------------------------------------------------
@@ -33,12 +46,22 @@ class TelemetryPacket(BaseModel):
     longitude: float
     altitude_m: float
     temperature_c: float
+    humidity_pct: Optional[float] = None
     pressure_hpa: float
     accel_x: float
     accel_y: float
     accel_z: float
     rssi: Optional[int] = None       # signal strength, LoRa only
     snr: Optional[float] = None      # signal-to-noise ratio, LoRa only
+    speed_mps: Optional[float] = None
+    heading_deg: Optional[float] = None
+    satellites_in_view: Optional[int] = None
+    battery_pct: Optional[float] = None
+    stability_index: Optional[float] = None
+    det: Optional[bool] = None
+    det_reason: Optional[int] = None
+    det_reason_text: Optional[str] = None
+    wind_gust_mph: Optional[float] = None  # simulator compatibility
     source: Optional[str] = "lora"   # "lora" | "serial" | "simulator"
 
 
@@ -50,10 +73,10 @@ async def receive_telemetry(packet: TelemetryPacket):
     global latest_telemetry
     latest_telemetry = packet.model_dump()
 
-    # Persist to a daily log file
-    log_filename = datetime.utcnow().strftime("%Y-%m-%d") + ".jsonl"
+    # Persist every packet to a daily log file.
+    log_filename = _packet_log_date(latest_telemetry) + ".jsonl"
     log_path = os.path.join(FLIGHT_LOGS_DIR, log_filename)
-    with open(log_path, "a") as f:
+    with open(log_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(latest_telemetry) + "\n")
 
     return {"status": "ok", "received_at": latest_telemetry["timestamp"]}

@@ -8,7 +8,7 @@ import {
     type TelemetryPacket,
 } from '../../services/telemetry';
 
-const POLL_INTERVAL = 30; // seconds — 10 for sim testing, 30 for real hardware
+const POLL_INTERVAL = 1; // seconds — set to match packet cadence
 
 // ─── Display helpers ──────────────────────────────────────────────────────────
 
@@ -63,10 +63,31 @@ function overallStatus(d: TelemetryPacket | null): 'nominal' | 'warning' | 'crit
 
 interface Alert { id: string; level: 'warning' | 'danger' | 'info'; message: string; }
 
+function detReasonLabel(packet: TelemetryPacket): string {
+    if (packet.det_reason_text) return packet.det_reason_text;
+    const reasons: Record<number, string> = {
+        0: 'NONE',
+        1: 'MANUAL_POP',
+        2: 'LOW_BATTERY',
+        3: 'GEOFENCE_EXIT',
+        4: 'ALTITUDE_DROP',
+    };
+    if (packet.det_reason == null) return 'UNKNOWN';
+    return reasons[packet.det_reason] ?? `UNKNOWN_${packet.det_reason}`;
+}
+
 function deriveAlerts(d: TelemetryPacket): Alert[] {
     const alerts: Alert[] = [];
     const altFt = metersToFeet(d.altitude_m);
     const tilt = tiltAngle(d.accel_x, d.accel_y, d.accel_z);
+
+    if (d.det) {
+        alerts.push({
+            id: 'det-fired',
+            level: 'danger',
+            message: `Detonation reported: ${detReasonLabel(d)}`,
+        });
+    }
 
     if (d.rssi != null && d.rssi < -110)
         alerts.push({ id: 'sig-crit', level: 'danger', message: `Signal critical: ${d.rssi} dBm — approaching loss-of-comms threshold.` });
@@ -158,23 +179,6 @@ function ConnectionBanner({ state }: { state: FetchState['status'] }) {
     );
 }
 
-function NextUpdateBar({ secondsLeft, total }: { secondsLeft: number; total: number }) {
-    const pct = ((total - secondsLeft) / total) * 100;
-    return (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-            <span className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}>
-                Next update in {secondsLeft}s
-            </span>
-            <div className="progress-bar" style={{ flex: 1, height: 4 }}>
-                <div
-                    className="progress-bar-fill nominal"
-                    style={{ width: `${pct}%`, transition: 'width 1s linear' }}
-                />
-            </div>
-        </div>
-    );
-}
-
 function DeflationButton() {
     const [phase, setPhase] = useState<'idle' | 'confirm' | 'sending' | 'confirmed'>('idle');
     const handleClick = () => {
@@ -215,7 +219,6 @@ function DeflationButton() {
 export default function Dashboard() {
     const [fetchState, setFetchState] = useState<FetchState>({ status: 'loading' });
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-    const [countdown, setCountdown] = useState(POLL_INTERVAL);
     const [alerts, setAlerts] = useState<Alert[]>([]);
 
     const data = fetchState.status === 'ok' ? fetchState.data : null;
@@ -227,7 +230,6 @@ export default function Dashboard() {
             setLastUpdated(new Date());
             setAlerts(deriveAlerts(result.data));
         }
-        setCountdown(POLL_INTERVAL);
     }, []);
 
     useEffect(() => {
@@ -235,11 +237,6 @@ export default function Dashboard() {
         const interval = setInterval(poll, POLL_INTERVAL * 1000);
         return () => clearInterval(interval);
     }, [poll]);
-
-    useEffect(() => {
-        const tick = setInterval(() => setCountdown(c => Math.max(0, c - 1)), 1000);
-        return () => clearInterval(tick);
-    }, []);
 
     const status = overallStatus(data);
     const altFt = data ? metersToFeet(data.altitude_m) : null;
@@ -263,9 +260,6 @@ export default function Dashboard() {
                 </span>
             </div>
 
-            {/* ── Next update progress bar ── */}
-            <NextUpdateBar secondsLeft={countdown} total={POLL_INTERVAL} />
-
             {/* ── Connection / no-data banner ── */}
             <ConnectionBanner state={fetchState.status} />
 
@@ -283,6 +277,7 @@ export default function Dashboard() {
                 <TelemetryCard label="SNR" value={fmt(data?.snr, 1)} unit="dB" level={snrLevel(data?.snr ?? null)} />
                 <TelemetryCard label="Pressure" value={fmt(data?.pressure_hpa, 1)} unit="hPa" />
                 <TelemetryCard label="Temperature" value={fmt(data?.temperature_c, 1)} unit="°C" />
+                <TelemetryCard label="Stability" value={fmt(data?.stability_index, 0)} unit="/100" />
                 {/* wind_gust_mph shown only when present (simulator only) */}
                 {data?.wind_gust_mph != null && (
                     <TelemetryCard
