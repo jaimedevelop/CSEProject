@@ -381,14 +381,14 @@ export default function Map() {
                 <div className="card">
                     <div className="card-title">Geofence Status</div>
                     <div style={{ marginTop: 'var(--space-2)', display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <span className="font-mono text-sm">Radius: {(geofence.radiusFt / 1000).toFixed(1)}k ft</span>
-                        <span className="font-mono text-sm">Max Alt: {geofence.maxAltitude.toLocaleString()} ft</span>
+                        <span className="font-mono text-sm">Radius: {feetToMeters(geofence.radiusFt).toLocaleString(undefined, { maximumFractionDigits: 0 })} m</span>
+                        <span className="font-mono text-sm">Max Alt: {feetToMeters(geofence.maxAltitude).toLocaleString(undefined, { maximumFractionDigits: 0 })} m</span>
                         {noData ? (
                             <span className="text-xs" style={{ color: 'var(--color-text-muted)', marginTop: 4 }}>⏳ Waiting for GPS…</span>
                         ) : (
                             <>
                                 <span className="font-mono text-xs text-muted" style={{ marginTop: 4 }}>
-                                    Distance: {(distanceFromCenter! / 1000).toFixed(1)}k ft
+                                    Distance: {feetToMeters(distanceFromCenter!).toLocaleString(undefined, { maximumFractionDigits: 0 })} m
                                 </span>
                                 <div style={{ display: 'flex', gap: 'var(--space-3)', marginTop: 6 }}>
                                     <span className="text-xs" style={{ color: isWithinGeofence ? 'var(--color-success)' : 'var(--color-danger)' }}>
