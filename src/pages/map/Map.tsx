@@ -1,15 +1,19 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { Circle, CircleMarker, MapContainer, Polyline, TileLayer, Tooltip, useMap } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
 import '../../styles/theme.css';
 import {
     fetchLatestTelemetry,
+    fetchTelemetryHistory,
     metersToFeet,
+    todayDateString,
     type TelemetryPacket,
 } from '../../services/telemetry';
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
 const POLL_INTERVAL = 1_000; // ms — set to match packet cadence
-const MAX_TRAIL = 60;         // keep last N positions in trail
+const MAX_TRAIL = 500;         // keep last N positions in trail
 
 /** Hardcoded geofence — will be made configurable from the webapp later */
 const HARDCODED_GEOFENCE = {
@@ -35,23 +39,33 @@ interface PredictionCone {
     active: boolean;
 }
 
-// ─── SVG Map helpers ──────────────────────────────────────────────────────────
-
-const W = 600, H = 500;
-const FT_PER_DEG_LAT = 364_000;
-const SCALE = 0.4;
-
-function latLngToSVG(ll: LatLng, center: LatLng): { x: number; y: number } {
-    const dx = (ll.lng - center.lng) * FT_PER_DEG_LAT * SCALE;
-    const dy = -(ll.lat - center.lat) * FT_PER_DEG_LAT * SCALE;
-    return { x: W / 2 + dx, y: H / 2 + dy };
+function feetToMeters(feet: number): number {
+    return feet / 3.28084;
 }
 
-function ftToSVGRadius(ft: number): number { return ft * SCALE; }
+function projectHeadingPoint(origin: LatLng, headingDeg: number, distanceFt: number): LatLng {
+    const distanceDegLat = distanceFt / 364_000;
+    const rad = (headingDeg * Math.PI) / 180;
+    const dLat = Math.cos(rad) * distanceDegLat;
+    const cosLat = Math.cos((origin.lat * Math.PI) / 180);
+    const safeCosLat = Math.abs(cosLat) < 1e-6 ? 1e-6 : cosLat;
+    const dLng = (Math.sin(rad) * distanceDegLat) / safeCosLat;
 
-// ─── SVG Map ─────────────────────────────────────────────────────────────────
+    return { lat: origin.lat + dLat, lng: origin.lng + dLng };
+}
 
-interface SVGMapProps {
+function RecenterOnPosition({ position, noData }: { position: LatLng; noData: boolean }) {
+    const map = useMap();
+
+    useEffect(() => {
+        if (noData) return;
+        map.panTo([position.lat, position.lng], { animate: true, duration: 0.5 });
+    }, [map, noData, position.lat, position.lng]);
+
+    return null;
+}
+
+interface LiveTileMapProps {
     position: LatLng;
     altitudeFt: number;
     heading: number;
@@ -64,128 +78,83 @@ interface SVGMapProps {
     noData: boolean;
 }
 
-function SVGMap({ position, altitudeFt, heading, trail, geofence, cone, showTrail, showCone, showGeofence, noData }: SVGMapProps) {
-    const bPt = latLngToSVG(position, geofence.center);
-    const gfR = ftToSVGRadius(geofence.radiusFt);
-    const cPt = latLngToSVG(cone.center, geofence.center);
-    const cR = ftToSVGRadius(cone.radiusFt);
-
-    const trailPts = trail
-        .map(p => latLngToSVG(p, geofence.center))
-        .map(p => `${p.x},${p.y}`)
-        .join(' ');
-
-    const c = {
-        bg: '#f0f6ff', grid: '#bfdbfe', muted: '#94a3b8', secondary: '#475569',
-        primary: '#2563eb', primaryLight: '#bfdbfe', warning: '#d97706',
-        danger: '#dc2626', info: '#0284c7',
-        hudBg: 'rgba(255,255,255,0.90)', hudBorder: '#bfdbfe', text: '#0f172a',
-    };
+function LiveTileMap({ position, altitudeFt, heading, trail, geofence, cone, showTrail, showCone, showGeofence, noData }: LiveTileMapProps) {
+    const headingPoint = projectHeadingPoint(position, heading, 200);
 
     return (
-        <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{
-            background: c.bg, borderRadius: 'var(--radius-lg)',
-            border: '1px solid var(--color-border)', boxShadow: 'var(--shadow-sm)',
+        <div style={{
+            height: 500,
+            width: '100%',
+            overflow: 'hidden',
+            borderRadius: 'var(--radius-lg)',
+            border: '1px solid var(--color-border)',
+            boxShadow: 'var(--shadow-sm)',
         }}>
-            {/* Grid */}
-            {Array.from({ length: 11 }).map((_, i) => (
-                <g key={i} stroke={c.grid} strokeWidth={1}>
-                    <line x1={i * (W / 10)} y1={0} x2={i * (W / 10)} y2={H} />
-                    <line x1={0} y1={i * (H / 10)} x2={W} y2={i * (H / 10)} />
-                </g>
-            ))}
+            <MapContainer
+                center={[position.lat, position.lng]}
+                zoom={12}
+                minZoom={4}
+                maxZoom={18}
+                scrollWheelZoom
+                style={{ height: '100%', width: '100%' }}
+            >
+                {/* Free, no-key satellite raster tiles. */}
+                <TileLayer
+                    url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                    attribution="Tiles &copy; Esri"
+                />
 
-            {/* Geofence */}
-            {showGeofence && (
-                <g>
-                    <circle cx={W / 2} cy={H / 2} r={gfR}
-                        fill="rgba(217,119,6,0.07)" stroke={c.warning} strokeWidth={2} strokeDasharray="8 4" />
-                    <text x={W / 2} y={H / 2 - gfR - 8} textAnchor="middle"
-                        fill={c.warning} fontSize={11} fontFamily="monospace" fontWeight="600">
-                        GEOFENCE BOUNDARY
-                    </text>
-                    {[0, 90, 180, 270].map(deg => {
-                        const rad = (deg - 90) * (Math.PI / 180);
-                        return (
-                            <text key={deg}
-                                x={W / 2 + (gfR + 18) * Math.cos(rad)}
-                                y={H / 2 + (gfR + 18) * Math.sin(rad) + 4}
-                                textAnchor="middle" fill={c.muted} fontSize={10} fontFamily="monospace">
-                                {['N', 'E', 'S', 'W'][deg / 90]}
-                            </text>
-                        );
-                    })}
-                </g>
-            )}
+                {!noData && <RecenterOnPosition position={position} noData={noData} />}
 
-            {/* Prediction cone */}
-            {showCone && cone.active && (
-                <g>
-                    <circle cx={cPt.x} cy={cPt.y} r={cR}
-                        fill="rgba(37,99,235,0.10)" stroke="rgba(37,99,235,0.45)"
-                        strokeWidth={1.5} strokeDasharray="5 3" />
-                    <text x={cPt.x} y={cPt.y - cR - 6} textAnchor="middle"
-                        fill={c.info} fontSize={10} fontFamily="monospace" fontWeight="600">
-                        95% LANDING ZONE
-                    </text>
-                </g>
-            )}
+                {showGeofence && (
+                    <Circle
+                        center={[geofence.center.lat, geofence.center.lng]}
+                        radius={feetToMeters(geofence.radiusFt)}
+                        pathOptions={{ color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 0.08, dashArray: '8 6' }}
+                    >
+                        <Tooltip sticky>Geofence boundary</Tooltip>
+                    </Circle>
+                )}
 
-            {/* Trail */}
-            {showTrail && trail.length > 1 && (
-                <polyline points={trailPts} fill="none"
-                    stroke={c.primary} strokeWidth={1.5} strokeOpacity={0.45} strokeDasharray="3 2" />
-            )}
+                {showCone && cone.active && (
+                    <Circle
+                        center={[cone.center.lat, cone.center.lng]}
+                        radius={feetToMeters(cone.radiusFt)}
+                        pathOptions={{ color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.12, dashArray: '6 5' }}
+                    >
+                        <Tooltip sticky>95% landing zone</Tooltip>
+                    </Circle>
+                )}
 
-            {/* Balloon marker */}
-            {!noData && (
-                <g transform={`translate(${bPt.x}, ${bPt.y})`}>
-                    <line x1={0} y1={0} x2={0} y2={20} stroke={c.muted} strokeWidth={1.5} />
-                    <ellipse cx={0} cy={-14} rx={10} ry={14}
-                        fill={c.primary} fillOpacity={0.80} stroke={c.primaryLight} strokeWidth={1.5} />
-                    <rect x={-5} y={6} width={10} height={6} rx={2}
-                        fill="#e0f2fe" stroke={c.muted} strokeWidth={1} />
-                    <line
-                        x1={0} y1={-28}
-                        x2={Math.sin((heading * Math.PI) / 180) * 6}
-                        y2={-28 - Math.cos((heading * Math.PI) / 180) * 6}
-                        stroke={c.text} strokeWidth={1.5} />
-                    <circle cx={0} cy={0} r={16} fill="none" stroke={c.primary} strokeWidth={1} strokeOpacity={0.3}>
-                        <animate attributeName="r" from="14" to="28" dur="2s" repeatCount="indefinite" />
-                        <animate attributeName="opacity" from="0.4" to="0" dur="2s" repeatCount="indefinite" />
-                    </circle>
-                </g>
-            )}
+                {showTrail && trail.length > 1 && (
+                    <Polyline
+                        positions={trail.map(p => [p.lat, p.lng] as [number, number])}
+                        pathOptions={{ color: '#22c55e', weight: 3, opacity: 0.85 }}
+                    />
+                )}
 
-            {/* Anchor */}
-            <circle cx={W / 2} cy={H / 2} r={4} fill={c.warning} />
-            <text x={W / 2 + 8} y={H / 2 + 4} fill={c.warning} fontSize={10} fontFamily="monospace" fontWeight="600">
-                ANCHOR
-            </text>
-
-            {/* HUD */}
-            <rect x={10} y={10} width={160} height={44} rx={6} fill={c.hudBg} stroke={c.hudBorder} strokeWidth={1} />
-            <text x={20} y={26} fill={c.secondary} fontSize={10} fontFamily="monospace">ALTITUDE</text>
-            <text x={20} y={46} fill={noData ? c.muted : c.text} fontSize={18} fontFamily="monospace" fontWeight="bold">
-                {noData ? '-- ft' : `${altitudeFt.toFixed(1)} ft`}
-            </text>
-
-            {/* No data overlay */}
-            {noData && (
-                <text x={W / 2} y={H / 2} textAnchor="middle"
-                    fill={c.muted} fontSize={14} fontFamily="monospace">
-                    Waiting for GPS data…
-                </text>
-            )}
-
-            {/* Scale bar */}
-            <g transform={`translate(${W - 110}, ${H - 24})`}>
-                <line x1={0} y1={0} x2={50 * SCALE} y2={0} stroke={c.muted} strokeWidth={1.5} />
-                <line x1={0} y1={-4} x2={0} y2={4} stroke={c.muted} strokeWidth={1.5} />
-                <line x1={50 * SCALE} y1={-4} x2={50 * SCALE} y2={4} stroke={c.muted} strokeWidth={1.5} />
-                <text x={50 * SCALE / 2} y={-6} textAnchor="middle" fill={c.muted} fontSize={9} fontFamily="monospace">50 ft</text>
-            </g>
-        </svg>
+                {!noData && (
+                    <>
+                        <Polyline
+                            positions={[
+                                [position.lat, position.lng],
+                                [headingPoint.lat, headingPoint.lng],
+                            ]}
+                            pathOptions={{ color: '#ffffff', weight: 2, opacity: 0.9 }}
+                        />
+                        <CircleMarker
+                            center={[position.lat, position.lng]}
+                            radius={8}
+                            pathOptions={{ color: '#ffffff', weight: 2, fillColor: '#2563eb', fillOpacity: 1 }}
+                        >
+                            <Tooltip direction="top" offset={[0, -8]}>
+                                Balloon · {altitudeFt.toFixed(1)} ft
+                            </Tooltip>
+                        </CircleMarker>
+                    </>
+                )}
+            </MapContainer>
+        </div>
     );
 }
 
@@ -208,7 +177,7 @@ export default function Map() {
     const [altitudeFt, setAltitudeFt] = useState(0);
     const [heading, setHeading] = useState(0);
     const [trail, setTrail] = useState<LatLng[]>([]);
-    const [geofence, setGeofence] = useState<GeofenceConfig>(DEFAULT_GEOFENCE);
+    const [geofence] = useState<GeofenceConfig>(DEFAULT_GEOFENCE);
     const [cone, setCone] = useState<PredictionCone>({ center: DEFAULT_CENTER, radiusFt: 60, active: false });
     const [showTrail, setShowTrail] = useState(true);
     const [showCone, setShowCone] = useState(true);
@@ -216,6 +185,7 @@ export default function Map() {
     const [noData, setNoData] = useState(true);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
     const prevPos = useRef<LatLng | null>(null);
+    const seededFromHistory = useRef(false);
 
     const applyPacket = useCallback((p: TelemetryPacket) => {
         const newPos: LatLng = { lat: p.latitude, lng: p.longitude };
@@ -247,11 +217,41 @@ export default function Map() {
         if (result.status === 'ok') applyPacket(result.data);
     }, [applyPacket]);
 
+    const loadRecentTrailFromLogs = useCallback(async () => {
+        const packets = await fetchTelemetryHistory(todayDateString());
+        if (packets.length === 0) return;
+
+        const recentTrail = packets
+            .slice(-MAX_TRAIL)
+            .map(p => ({ lat: p.latitude, lng: p.longitude }));
+        setTrail(recentTrail);
+
+        const latest = packets[packets.length - 1];
+        const latestPos: LatLng = { lat: latest.latitude, lng: latest.longitude };
+        setPosition(latestPos);
+        setAltitudeFt(metersToFeet(latest.altitude_m));
+
+        if (latest.heading_deg != null) {
+            const wrapped = ((latest.heading_deg % 360) + 360) % 360;
+            setHeading(wrapped);
+        }
+
+        const ts = new Date(latest.timestamp);
+        setLastUpdated(Number.isNaN(ts.getTime()) ? new Date() : ts);
+        setNoData(false);
+        prevPos.current = latestPos;
+    }, []);
+
     useEffect(() => {
+        if (!seededFromHistory.current) {
+            seededFromHistory.current = true;
+            void loadRecentTrailFromLogs();
+        }
+
         poll();
         const id = setInterval(poll, POLL_INTERVAL);
         return () => clearInterval(id);
-    }, [poll]);
+    }, [loadRecentTrailFromLogs, poll]);
 
     // Calculate distance from balloon to geofence center
     const distanceFromCenter = (() => {
@@ -304,8 +304,8 @@ export default function Map() {
                 </div>
             </div>
 
-            {/* ── SVG Map ── */}
-            <SVGMap
+            {/* ── Live Tile Map ── */}
+            <LiveTileMap
                 position={position}
                 altitudeFt={altitudeFt}
                 heading={heading}

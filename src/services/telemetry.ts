@@ -25,7 +25,19 @@ export interface TelemetryPacket {
     det_reason?: number | null;
     det_reason_text?: string | null;
     wind_gust_mph: number | null; // kept for simulator compat; may be null on real hardware
+    calculated_wind_gust_mph?: number | null;
+    pressure_drop_3h_mb?: number | null;
+    pressure_drop_warning?: boolean | null;
+    wind_gust_warning?: boolean | null;
     source: string | null;
+}
+
+export interface FlightSummary {
+    id: string;
+    name: string;
+    started_at: string;
+    ended_at?: string | null;
+    packet_count: number;
 }
 
 export type FetchState =
@@ -110,5 +122,92 @@ export async function triggerManualDeflation(): Promise<DeflateResult> {
         return { ok: true, message: msgFromBody ?? 'Deflation command sent' };
     } catch {
         return { ok: false, message: 'Unable to reach backend' };
+    }
+}
+
+export async function fetchFlightStatus(): Promise<FlightSummary | null> {
+    try {
+        const res = await fetch(`${API_BASE}/flights/status`, { cache: 'no-store' });
+        if (!res.ok) return null;
+        const data: unknown = await res.json();
+        if (data && typeof data === 'object' && 'active' in data) {
+            const active = (data as { active?: unknown }).active;
+            return active && typeof active === 'object' ? (active as FlightSummary) : null;
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+export async function startFlight(): Promise<FlightSummary | null> {
+    try {
+        const res = await fetch(`${API_BASE}/flights/start`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        if (!res.ok) return null;
+        const data: unknown = await res.json();
+        if (data && typeof data === 'object' && 'flight' in data) {
+            const flight = (data as { flight?: unknown }).flight;
+            return flight && typeof flight === 'object' ? (flight as FlightSummary) : null;
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+export async function endFlight(): Promise<FlightSummary | null> {
+    try {
+        const res = await fetch(`${API_BASE}/flights/end`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        if (!res.ok) return null;
+        const data: unknown = await res.json();
+        if (data && typeof data === 'object' && 'flight' in data) {
+            const flight = (data as { flight?: unknown }).flight;
+            return flight && typeof flight === 'object' ? (flight as FlightSummary) : null;
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+export async function fetchFlights(): Promise<FlightSummary[]> {
+    try {
+        const res = await fetch(`${API_BASE}/flights`, { cache: 'no-store' });
+        if (!res.ok) return [];
+        const data: unknown = await res.json();
+        if (data && typeof data === 'object' && 'flights' in data) {
+            const flights = (data as { flights?: unknown }).flights;
+            return Array.isArray(flights) ? (flights as FlightSummary[]) : [];
+        }
+        return [];
+    } catch {
+        return [];
+    }
+}
+
+export async function fetchFlightPackets(flightId: string): Promise<{ flight: FlightSummary | null; packets: TelemetryPacket[] }> {
+    try {
+        const res = await fetch(`${API_BASE}/flights/${encodeURIComponent(flightId)}/packets`, { cache: 'no-store' });
+        if (!res.ok) return { flight: null, packets: [] };
+
+        const data: unknown = await res.json();
+        if (!data || typeof data !== 'object') return { flight: null, packets: [] };
+
+        const flight = 'flight' in data && (data as { flight?: unknown }).flight && typeof (data as { flight?: unknown }).flight === 'object'
+            ? ((data as { flight?: unknown }).flight as FlightSummary)
+            : null;
+
+        const packetsRaw = 'packets' in data ? (data as { packets?: unknown }).packets : [];
+        const packets = Array.isArray(packetsRaw) ? (packetsRaw as TelemetryPacket[]) : [];
+
+        return { flight, packets };
+    } catch {
+        return { flight: null, packets: [] };
     }
 }

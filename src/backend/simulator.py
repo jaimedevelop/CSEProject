@@ -14,8 +14,6 @@ INTERVAL  = 30        # seconds between packets
 def simulate_flight():
     t = 0
     total_flight = 1800  # 30 min
-    # Seed a slowly-drifting wind gust baseline so changes feel continuous
-    wind_gust = random.uniform(5.0, 15.0)
 
     while True:
         progress = min(t / total_flight, 1.0)
@@ -29,11 +27,6 @@ def simulate_flight():
         accel_y     = round(random.uniform(-0.15, 0.15), 3)
         accel_z     = round(9.81 + random.uniform(-0.05, 0.05), 3)
 
-        # Wind gust: random walk clamped 0–60 mph, stronger at altitude
-        alt_factor  = 1.0 + (altitude / MAX_ALT) * 1.5   # up to 2.5x at peak
-        wind_gust   = max(0.0, wind_gust + random.uniform(-3.0, 3.0) * alt_factor)
-        wind_gust   = min(wind_gust, 60.0)
-
         packet = {
             "timestamp":     datetime.now(timezone.utc).isoformat(),
             "latitude":      round(lat, 6),
@@ -46,7 +39,7 @@ def simulate_flight():
             "accel_z":       accel_z,
             "rssi":          random.randint(-120, -60),
             "snr":           round(random.uniform(3.0, 10.0), 1),
-            "wind_gust_mph": round(wind_gust, 1),
+            "satellites_in_view": random.randint(6, 18),
             "source":        "simulator",
         }
 

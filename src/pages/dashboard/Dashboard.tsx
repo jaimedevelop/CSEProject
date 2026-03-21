@@ -107,8 +107,12 @@ function deriveAlerts(d: TelemetryPacket): Alert[] {
     if (d.snr != null && d.snr < 0)
         alerts.push({ id: 'snr-warn', level: 'warning', message: `Negative SNR: ${d.snr} dB — packet loss likely.` });
 
-    if (d.pressure_hpa < 890)
-        alerts.push({ id: 'pres-warn', level: 'warning', message: `Low pressure: ${d.pressure_hpa.toFixed(1)} hPa — high altitude or storm conditions.` });
+    if (d.pressure_drop_warning)
+        alerts.push({
+            id: 'pres-drop-warn',
+            level: 'warning',
+            message: `Pressure drop warning: ${fmt(d.pressure_drop_3h_mb ?? null, 1)} mb over 3h and current pressure ${d.pressure_hpa.toFixed(1)} mb (<1009 mb).`,
+        });
 
     if (altFt > 19000)
         alerts.push({ id: 'alt-warn', level: 'warning', message: `High altitude: ${altFt.toFixed(0)} ft` });
@@ -118,8 +122,8 @@ function deriveAlerts(d: TelemetryPacket): Alert[] {
     else if (tilt > 20)
         alerts.push({ id: 'tilt-warn', level: 'warning', message: `Elevated tilt: ${tilt.toFixed(1)}°` });
 
-    if (d.wind_gust_mph != null && d.wind_gust_mph > 40)
-        alerts.push({ id: 'wind-warn', level: 'danger', message: `Wind gusts exceed 40 mph (${d.wind_gust_mph.toFixed(1)} mph) — deflation recommended.` });
+    if (d.calculated_wind_gust_mph != null && d.calculated_wind_gust_mph > 40)
+        alerts.push({ id: 'wind-warn', level: 'danger', message: `Calculated wind gust exceeds 40 mph (${d.calculated_wind_gust_mph.toFixed(1)} mph).` });
 
     return alerts;
 }
@@ -313,15 +317,16 @@ export default function Dashboard() {
                 <TelemetryCard label="Pressure" value={fmt(data?.pressure_hpa, 1)} unit="hPa" />
                 <TelemetryCard label="Temperature" value={fmt(data?.temperature_c, 1)} unit="°C" />
                 <TelemetryCard label="Stability" value={fmt(data?.stability_index, 0)} unit="/100" />
-                {/* wind_gust_mph shown only when present (simulator only) */}
-                {data?.wind_gust_mph != null && (
-                    <TelemetryCard
-                        label="Wind Gust"
-                        value={fmt(data.wind_gust_mph, 1)}
-                        unit="mph"
-                        level={data.wind_gust_mph > 40 ? 'critical' : data.wind_gust_mph > 25 ? 'warning' : 'nominal'}
-                    />
-                )}
+                <TelemetryCard
+                    label="Calc Wind Gust"
+                    value={fmt(data?.calculated_wind_gust_mph ?? null, 1)}
+                    unit="mph"
+                    level={
+                        (data?.calculated_wind_gust_mph ?? null) == null
+                            ? 'unknown'
+                            : (data!.calculated_wind_gust_mph! > 40 ? 'critical' : data!.calculated_wind_gust_mph! > 25 ? 'warning' : 'nominal')
+                    }
+                />
             </div>
 
             {/* ── Orientation + GPS ── */}

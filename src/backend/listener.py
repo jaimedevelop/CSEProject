@@ -128,6 +128,19 @@ def parse_line(raw: str) -> dict | None:
             speed_mps = float(raw_packet.get("speed", 0)) / 1000.0
             heading_deg = float(raw_packet.get("heading", 0)) / 100000.0
 
+            satellites_raw = raw_packet.get("siv")
+            if satellites_raw is None:
+                satellites_raw = raw_packet.get("satellites_in_view")
+            if satellites_raw is None:
+                satellites_raw = raw_packet.get("satellitesInView")
+            if satellites_raw is None:
+                satellites_raw = raw_packet.get("satellites")
+
+            try:
+                satellites_in_view = int(satellites_raw) if satellites_raw is not None else None
+            except (TypeError, ValueError):
+                satellites_in_view = None
+
             det_reason = int(raw_packet.get("detReason", 0))
             det_reason_text = DET_REASON_LABELS.get(det_reason, f"UNKNOWN_{det_reason}")
 
@@ -153,13 +166,12 @@ def parse_line(raw: str) -> dict | None:
                 "snr":           raw_packet.get("snr", 0.0),
                 "speed_mps":     speed_mps,
                 "heading_deg":   heading_deg,
-                "satellites_in_view": raw_packet.get("siv"),
+                "satellites_in_view": satellites_in_view,
                 "battery_pct":   battery_pct,
                 "stability_index": raw_packet.get("stability"),
                 "det":           bool(raw_packet.get("det", False)),
                 "det_reason":    det_reason,
                 "det_reason_text": det_reason_text,
-                "wind_gust_mph": None,  # simulator-only field
                 "source":        "lora_radio"
             }
 
