@@ -86,3 +86,29 @@ export function tiltAngle(ax: number, ay: number, az: number): number {
     const xy = Math.sqrt(ax ** 2 + ay ** 2);
     return Math.atan2(xy, Math.abs(az)) * (180 / Math.PI);
 }
+
+export type DeflateResult =
+    | { ok: true; message: string }
+    | { ok: false; message: string };
+
+export async function triggerManualDeflation(): Promise<DeflateResult> {
+    try {
+        const res = await fetch(`${API_BASE}/deflate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+        });
+
+        const data: unknown = await res.json().catch(() => ({}));
+        const msgFromBody = data && typeof data === 'object'
+            ? (data as { detail?: string; message?: string }).detail ?? (data as { detail?: string; message?: string }).message
+            : undefined;
+
+        if (!res.ok) {
+            return { ok: false, message: msgFromBody ?? `Request failed (${res.status})` };
+        }
+
+        return { ok: true, message: msgFromBody ?? 'Deflation command sent' };
+    } catch {
+        return { ok: false, message: 'Unable to reach backend' };
+    }
+}

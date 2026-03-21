@@ -10,9 +10,11 @@ import sys
 import json
 import subprocess
 import time
+import threading
 import requests
 import serial          # pip install pyserial
 import serial.tools.list_ports
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime, timezone
 
 # =============================================================================
@@ -22,6 +24,8 @@ SIM_MODE    = 0  # True = simulator
 SERIAL_PORT = os.environ.get("SERIAL_PORT", "")        # e.g. COM3 or /dev/ttyUSB0
 BAUD_RATE   = int(os.environ.get("BAUD_RATE", "115200"))
 API_URL     = os.environ.get("API_URL", "http://127.0.0.1:8000/telemetry")
+CONTROL_HOST = os.environ.get("LISTENER_CONTROL_HOST", "127.0.0.1")
+CONTROL_PORT = int(os.environ.get("LISTENER_CONTROL_PORT", "8765"))
 # =============================================================================
 
 DET_REASON_LABELS = {
@@ -31,6 +35,62 @@ DET_REASON_LABELS = {
     3: "GEOFENCE_EXIT",
     4: "ALTITUDE_DROP",
 }
+
+serial_lock = threading.Lock()
+active_serial: serial.Serial | None = None
+
+
+def send_pop_command() -> tuple[bool, str]:
+    """Send POP over the active serial link, if available."""
+    if SIM_MODE:
+        print("[listener] SIM_MODE=ON — accepted POP command (simulated)")
+        return True, "POP accepted in simulator mode"
+
+    with serial_lock:
+        if active_serial is None or not active_serial.is_open:
+            return False, "Serial link is not connected"
+
+        try:
+            active_serial.write(b"POP\n")
+            active_serial.flush()
+            print("[listener] POP command sent over serial")
+            return True, "POP command sent"
+        except serial.SerialException as e:
+            return False, f"Failed to write POP command: {e}"
+
+
+class ControlRequestHandler(BaseHTTPRequestHandler):
+    """Small local control API so the backend can trigger serial commands."""
+
+    def _send_json(self, status_code: int, payload: dict):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        if self.path != "/control/pop":
+            self._send_json(404, {"error": "Not found"})
+            return
+
+        ok, message = send_pop_command()
+        if ok:
+            self._send_json(200, {"status": "ok", "message": message})
+        else:
+            self._send_json(409, {"status": "error", "error": message})
+
+    def log_message(self, format: str, *args):
+        # Keep output focused on telemetry/control events.
+        return
+
+
+def start_control_server():
+    server = ThreadingHTTPServer((CONTROL_HOST, CONTROL_PORT), ControlRequestHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    print(f"[listener] Control API listening on http://{CONTROL_HOST}:{CONTROL_PORT}/control/pop")
 
 
 def post_packet(packet: dict):
@@ -138,6 +198,7 @@ def auto_detect_port() -> str:
     return "COM9"
 
 def run_serial_mode():
+    global active_serial
     port = SERIAL_PORT or auto_detect_port()
     if not port:
         print("[listener] ERROR: No serial port found. Set SERIAL_PORT env var.", file=sys.stderr)
@@ -145,8 +206,11 @@ def run_serial_mode():
 
     print(f"[listener] SIM_MODE=OFF — opening serial port {port} @ {BAUD_RATE} baud")
     while True:   # reconnect loop
+        ser = None
         try:
             with serial.Serial(port, BAUD_RATE, timeout=2) as ser:
+                with serial_lock:
+                    active_serial = ser
                 print(f"[listener] Connected to {port}")
                 while True:
                     raw = ser.readline().decode("utf-8", errors="replace")
@@ -159,10 +223,15 @@ def run_serial_mode():
         except KeyboardInterrupt:
             print("[listener] Stopped.")
             break
+        finally:
+            with serial_lock:
+                if ser is not None and active_serial is ser:
+                    active_serial = None
 
 
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    start_control_server()
     if SIM_MODE:
         run_sim_mode()
     else:

@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import Optional
 import json
 import os
+import requests
 from datetime import datetime
 
 app = FastAPI(title="Telemetry API")
@@ -19,6 +20,7 @@ app.add_middleware(
 
 FLIGHT_LOGS_DIR = os.path.join(os.path.dirname(__file__), "flight_logs")
 os.makedirs(FLIGHT_LOGS_DIR, exist_ok=True)
+LISTENER_CONTROL_URL = os.environ.get("LISTENER_CONTROL_URL", "http://127.0.0.1:8765/control/pop")
 
 # In-memory store of the latest telemetry packet
 latest_telemetry: Optional[dict] = None
@@ -82,13 +84,27 @@ async def receive_telemetry(packet: TelemetryPacket):
     return {"status": "ok", "received_at": latest_telemetry["timestamp"]}
 
 
-# Post /deflate for manual deflation command
+# POST /deflate for manual deflation command
 @app.post("/deflate")
 def deflate():
-    print("Received deflation command:")
+    try:
+        listener_resp = requests.post(LISTENER_CONTROL_URL, timeout=3)
+    except requests.RequestException as e:
+        raise HTTPException(status_code=503, detail=f"Listener control unavailable: {e}") from e
+
+    try:
+        listener_payload = listener_resp.json()
+    except ValueError:
+        listener_payload = {"raw": listener_resp.text}
+
+    if listener_resp.status_code >= 400:
+        detail = listener_payload.get("error") or listener_payload.get("message") or "Listener rejected POP command"
+        raise HTTPException(status_code=listener_resp.status_code, detail=detail)
+
     return {
         "status": "ok",
-        "message": "Deflation initiated"
+        "message": "Deflation command relayed",
+        "listener": listener_payload,
     }
 
 # -------------------------------------------------------------------

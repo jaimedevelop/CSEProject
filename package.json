@@ -3,7 +3,10 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -n frontend,backend -c cyan,green \"vite\" \"python -m uvicorn src.backend.main:app --reload\"",
+    "dev:front": "vite",
+    "dev:back": "python -m uvicorn src.backend.main:app --reload",
+    "dev:listener": "python src/backend/listener.py",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },
@@ -17,6 +20,7 @@
     "@types/react": "^19.2.10",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.2",
+    "concurrently": "^9.2.1",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
   }

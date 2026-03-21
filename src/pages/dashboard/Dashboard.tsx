@@ -3,6 +3,7 @@ import '../../styles/theme.css';
 import {
     fetchLatestTelemetry,
     metersToFeet,
+    triggerManualDeflation,
     tiltAngle,
     type FetchState,
     type TelemetryPacket,
@@ -180,13 +181,25 @@ function ConnectionBanner({ state }: { state: FetchState['status'] }) {
 }
 
 function DeflationButton() {
-    const [phase, setPhase] = useState<'idle' | 'confirm' | 'sending' | 'confirmed'>('idle');
-    const handleClick = () => {
+    const [phase, setPhase] = useState<'idle' | 'confirm' | 'sending' | 'confirmed' | 'error'>('idle');
+    const [statusMsg, setStatusMsg] = useState<string>('');
+
+    const handleClick = async () => {
         if (phase === 'idle') return setPhase('confirm');
         if (phase === 'confirm') {
             setPhase('sending');
-            setTimeout(() => setPhase('confirmed'), 2000);
-            setTimeout(() => setPhase('idle'), 6000);
+            const result = await triggerManualDeflation();
+            if (result.ok) {
+                setStatusMsg(result.message);
+                setPhase('confirmed');
+            } else {
+                setStatusMsg(result.message);
+                setPhase('error');
+            }
+            setTimeout(() => {
+                setStatusMsg('');
+                setPhase('idle');
+            }, 6000);
         }
     };
     const labels = {
@@ -194,13 +207,14 @@ function DeflationButton() {
         confirm: '⚠️ Confirm Deflation?',
         sending: '📡 Sending Command…',
         confirmed: '✅ Descent Initiated',
+        error: '❌ Command Failed',
     };
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
             <button
-                className={`btn ${phase === 'idle' ? 'btn-danger' : phase === 'confirmed' ? 'btn-ghost' : 'btn-danger'}`}
+                className={`btn ${phase === 'confirmed' ? 'btn-ghost' : 'btn-danger'}`}
                 onClick={handleClick}
-                disabled={phase === 'sending' || phase === 'confirmed'}
+                disabled={phase === 'sending'}
                 style={{ width: '100%', padding: 'var(--space-3) var(--space-4)', fontSize: 'var(--text-base)' }}
             >
                 {labels[phase]}
@@ -208,6 +222,17 @@ function DeflationButton() {
             {phase === 'confirm' && (
                 <p style={{ fontSize: 'var(--text-xs)', color: 'var(--color-warning)', textAlign: 'center' }}>
                     Click again to confirm. This will rupture the balloon envelope.
+                </p>
+            )}
+            {statusMsg && (
+                <p
+                    style={{
+                        fontSize: 'var(--text-xs)',
+                        color: phase === 'error' ? 'var(--color-danger)' : 'var(--color-success)',
+                        textAlign: 'center',
+                    }}
+                >
+                    {statusMsg}
                 </p>
             )}
         </div>
@@ -322,7 +347,7 @@ export default function Dashboard() {
                 </div>
                 <p className="text-sm text-secondary" style={{ marginBottom: 'var(--space-4)' }}>
                     Manual deflation overrides all logic and ruptures the balloon envelope. Use only in an emergency.
-                    Descent confirmation will be received within 5 seconds.
+                    Command acknowledgement is immediate; physical descent response may take a few seconds.
                 </p>
                 <DeflationButton />
             </div>
