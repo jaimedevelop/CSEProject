@@ -124,6 +124,33 @@ export async function triggerManualDeflation(): Promise<DeflateResult> {
     }
 }
 
+export type GeofenceResult =
+    | { ok: true; message: string }
+    | { ok: false; message: string };
+
+export async function sendGeofence(latitude: number, longitude: number, radius: number, maxAltitude: number): Promise<GeofenceResult> {
+    try {
+        const res = await fetch(`${API_BASE}/geofence`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ latitude, longitude, radius, max_altitude: maxAltitude }),
+        });
+
+        const data: unknown = await res.json().catch(() => ({}));
+        const msgFromBody = data && typeof data === 'object'
+            ? (data as { detail?: string; message?: string }).detail ?? (data as { detail?: string; message?: string }).message
+            : undefined;
+
+        if (!res.ok) {
+            return { ok: false, message: msgFromBody ?? `Request failed (${res.status})` };
+        }
+
+        return { ok: true, message: msgFromBody ?? 'Geofence set successfully' };
+    } catch {
+        return { ok: false, message: 'Unable to reach backend' };
+    }
+}
+
 export async function fetchFlightStatus(): Promise<FlightSummary | null> {
     try {
         const res = await fetch(`${API_BASE}/flights/status`, { cache: 'no-store' });

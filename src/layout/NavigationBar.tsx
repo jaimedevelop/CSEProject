@@ -12,7 +12,6 @@ const NAV_ITEMS: NavItem[] = [
     { to: '/', icon: '📡', label: 'Dashboard' },
     { to: '/map', icon: '🗺️', label: 'Map' },
     { to: '/flightlogs', icon: '📋', label: 'Flight Logs' },
-    { to: '/usersettings', icon: '⚙️', label: 'Settings' },
 ];
 
 const NavigationBar: React.FC = () => {

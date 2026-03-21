@@ -128,6 +128,13 @@ class TelemetryPacket(BaseModel):
     wind_gust_mph: Optional[float] = None  # simulator compatibility
 
 
+class GeofenceCommand(BaseModel):
+    latitude: float
+    longitude: float
+    radius: float
+    max_altitude: float
+
+
 class FlightSummary(BaseModel):
     id: str
     name: str
@@ -410,6 +417,38 @@ def deflate():
     return {
         "status": "ok",
         "message": "Deflation command relayed",
+        "listener": listener_payload,
+    }
+
+@app.post("/geofence")
+def set_geofence(cmd: GeofenceCommand):
+    try:
+        geofence_control_url = LISTENER_CONTROL_URL.replace("/control/pop", "/control/geofence")
+        listener_resp = requests.post(
+            geofence_control_url,
+            json={
+                "latitude": cmd.latitude,
+                "longitude": cmd.longitude,
+                "radius": cmd.radius,
+                "max_altitude": cmd.max_altitude,
+            },
+            timeout=3,
+        )
+    except requests.RequestException as e:
+        raise HTTPException(status_code=503, detail=f"Listener control unavailable: {e}") from e
+
+    try:
+        listener_payload = listener_resp.json()
+    except ValueError:
+        listener_payload = {"raw": listener_resp.text}
+
+    if listener_resp.status_code >= 400:
+        detail = listener_payload.get("error") or listener_payload.get("message") or "Listener rejected GEOFENCE command"
+        raise HTTPException(status_code=listener_resp.status_code, detail=detail)
+
+    return {
+        "status": "ok",
+        "message": "Geofence command relayed",
         "listener": listener_payload,
     }
 

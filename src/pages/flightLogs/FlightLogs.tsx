@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import '../../styles/theme.css';
+import { GeofenceModal, type GeofenceInput } from './GeofenceModal';
 import {
     endFlight,
     fetchFlightPackets,
@@ -7,6 +8,7 @@ import {
     fetchFlightStatus,
     metersToFeet,
     startFlight,
+    sendGeofence,
     tiltAngle,
     type FlightSummary,
     type TelemetryPacket,
@@ -106,7 +108,10 @@ export default function FlightLogs() {
     const [currentPage, setCurrentPage] = useState(1);
     const [showOnlyDet, setShowOnlyDet] = useState(false);
 
-    const PACKETS_PER_PAGE = 50;
+    const [showGeofenceModal, setShowGeofenceModal] = useState(false);
+    const [geofenceSubmitting, setGeofenceSubmitting] = useState(false);
+
+    const PACKETS_PER_PAGE = 25;
 
     const selectedFlight = useMemo(
         () => flights.find(f => f.id === selectedFlightId) ?? null,
@@ -153,10 +158,9 @@ export default function FlightLogs() {
         } else {
             setPackets(result.packets);
             if (result.flight) {
-                setFlights(prev => {
-                    const others = prev.filter(f => f.id !== result.flight!.id);
-                    return [result.flight!, ...others];
-                });
+                setFlights(prev =>
+                    prev.map(f => f.id === result.flight!.id ? result.flight! : f)
+                );
                 if (!result.flight.ended_at) {
                     setActiveFlight(result.flight);
                 }
@@ -191,6 +195,30 @@ export default function FlightLogs() {
     }, [search, showOnlyDet, currentFlightId]);
 
     const handleStartFlight = async () => {
+        setShowGeofenceModal(true);
+    };
+
+    const handleGeofenceConfirm = async (geofence: GeofenceInput) => {
+        setGeofenceSubmitting(true);
+        
+        // Send geofence command first
+        const geofenceResult = await sendGeofence(
+            geofence.latitude,
+            geofence.longitude,
+            geofence.radius,
+            geofence.maxAltitude,
+        );
+
+        if (!geofenceResult.ok) {
+            // TODO: show error to user, but don't proceed with flight start
+            console.error('Geofence command failed:', geofenceResult.message);
+            setShowGeofenceModal(false);
+            setGeofenceSubmitting(false);
+            alert(`Geofence failed: ${geofenceResult.message}`);
+            return;
+        }
+
+        // Then start the flight
         setActionBusy(true);
         const flight = await startFlight();
         await refreshFlights();
@@ -199,6 +227,12 @@ export default function FlightLogs() {
             await loadPackets(true);
         }
         setActionBusy(false);
+        setShowGeofenceModal(false);
+        setGeofenceSubmitting(false);
+    };
+
+    const handleGeofenceCancel = () => {
+        setShowGeofenceModal(false);
     };
 
     const handleEndFlight = async () => {
@@ -535,6 +569,13 @@ export default function FlightLogs() {
                     })}
                 </div>
             </aside>
+
+            <GeofenceModal
+                isOpen={showGeofenceModal}
+                onConfirm={handleGeofenceConfirm}
+                onCancel={handleGeofenceCancel}
+                isLoading={geofenceSubmitting}
+            />
         </div>
     );
 }

@@ -59,6 +59,39 @@ def send_pop_command() -> tuple[bool, str]:
             return False, f"Failed to write POP command: {e}"
 
 
+def send_geofence_command(latitude: float, longitude: float, radius: float, max_altitude: float) -> tuple[bool, str]:
+    """Send GEOFENCE over the active serial link.
+    
+    Format: GEOFENCE,<lat>,<lon>,<radius>,<maxAlt>
+    Latitude and longitude are in degrees * 1e7 (integer format).
+    Radius is in meters.
+    Max altitude is in meters.
+    """
+    if SIM_MODE:
+        print(f"[listener] SIM_MODE=ON — accepted GEOFENCE command (simulated)")
+        return True, "GEOFENCE accepted in simulator mode"
+
+    # Convert to integer format (degrees * 1e7)
+    lat_long = int(latitude * 1e7)
+    lon_long = int(longitude * 1e7)
+    radius_long = int(radius)
+    alt_long = int(max_altitude)
+
+    command = f"GEOFENCE,{lat_long},{lon_long},{radius_long},{alt_long}\n"
+
+    with serial_lock:
+        if active_serial is None or not active_serial.is_open:
+            return False, "Serial link is not connected"
+
+        try:
+            active_serial.write(command.encode("utf-8"))
+            active_serial.flush()
+            print(f"[listener] GEOFENCE command sent over serial: {command.strip()}")
+            return True, "GEOFENCE command sent"
+        except serial.SerialException as e:
+            return False, f"Failed to write GEOFENCE command: {e}"
+
+
 class ControlRequestHandler(BaseHTTPRequestHandler):
     """Small local control API so the backend can trigger serial commands."""
 
@@ -71,15 +104,30 @@ class ControlRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        if self.path != "/control/pop":
-            self._send_json(404, {"error": "Not found"})
-            return
-
-        ok, message = send_pop_command()
-        if ok:
-            self._send_json(200, {"status": "ok", "message": message})
+        if self.path == "/control/pop":
+            ok, message = send_pop_command()
+            if ok:
+                self._send_json(200, {"status": "ok", "message": message})
+            else:
+                self._send_json(409, {"status": "error", "error": message})
+        elif self.path == "/control/geofence":
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length)
+            try:
+                data = json.loads(body.decode("utf-8"))
+                latitude = float(data.get("latitude"))
+                longitude = float(data.get("longitude"))
+                radius = float(data.get("radius"))
+                max_altitude = float(data.get("max_altitude"))
+                ok, message = send_geofence_command(latitude, longitude, radius, max_altitude)
+                if ok:
+                    self._send_json(200, {"status": "ok", "message": message})
+                else:
+                    self._send_json(409, {"status": "error", "error": message})
+            except (json.JSONDecodeError, ValueError, KeyError) as e:
+                self._send_json(400, {"status": "error", "error": f"Invalid geofence data: {e}"})
         else:
-            self._send_json(409, {"status": "error", "error": message})
+            self._send_json(404, {"error": "Not found"})
 
     def log_message(self, format: str, *args):
         # Keep output focused on telemetry/control events.
@@ -90,7 +138,7 @@ def start_control_server():
     server = ThreadingHTTPServer((CONTROL_HOST, CONTROL_PORT), ControlRequestHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    print(f"[listener] Control API listening on http://{CONTROL_HOST}:{CONTROL_PORT}/control/pop")
+    print(f"[listener] Control API listening on http://{CONTROL_HOST}:{CONTROL_PORT}/control/pop and /control/geofence")
 
 
 def post_packet(packet: dict):

@@ -176,7 +176,25 @@ export default function Map() {
     const [altitudeFt, setAltitudeFt] = useState(0);
     const [heading, setHeading] = useState(0);
     const [trail, setTrail] = useState<LatLng[]>([]);
-    const [geofence] = useState<GeofenceConfig>(DEFAULT_GEOFENCE);
+    
+    // Load geofence from localStorage if available, otherwise use default
+    const [geofence, setGeofence] = useState<GeofenceConfig>(() => {
+        try {
+            const stored = localStorage.getItem('geofence');
+            if (stored) {
+                const { latitude, longitude, radius, maxAltitude } = JSON.parse(stored);
+                return {
+                    center: { lat: latitude, lng: longitude },
+                    radiusFt: radius * 3.28084, // convert m to ft
+                    maxAltitude: maxAltitude * 3.28084, // convert m to ft
+                };
+            }
+        } catch {
+            // Fall through to default on parse error
+        }
+        return DEFAULT_GEOFENCE;
+    });
+    
     const [cone, setCone] = useState<PredictionCone>({ center: DEFAULT_CENTER, radiusFt: 60, active: false });
     const [showTrail, setShowTrail] = useState(true);
     const [showCone, setShowCone] = useState(true);
@@ -257,6 +275,27 @@ export default function Map() {
         }, POLL_INTERVAL);
         return () => clearInterval(id);
     }, [pollLiveMarker, syncCurrentFlightTrail]);
+
+    // Listen for geofence changes from localStorage
+    useEffect(() => {
+        const handleStorageChange = (e: StorageEvent) => {
+            if (e.key === 'geofence' && e.newValue) {
+                try {
+                    const { latitude, longitude, radius, maxAltitude } = JSON.parse(e.newValue);
+                    setGeofence({
+                        center: { lat: latitude, lng: longitude },
+                        radiusFt: radius * 3.28084,
+                        maxAltitude: maxAltitude * 3.28084,
+                    });
+                } catch {
+                    // Ignore parse errors
+                }
+            }
+        };
+
+        window.addEventListener('storage', handleStorageChange);
+        return () => window.removeEventListener('storage', handleStorageChange);
+    }, []);
 
     // Calculate distance from balloon to geofence center
     const distanceFromCenter = (() => {
