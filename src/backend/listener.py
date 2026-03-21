@@ -65,7 +65,7 @@ def send_geofence_command(latitude: float, longitude: float, radius: float, max_
     Format: GEOFENCE,<lat>,<lon>,<radius>,<maxAlt>
     Latitude and longitude are in degrees * 1e7 (integer format).
     Radius is in meters.
-    Max altitude is in meters.
+    Max altitude is sent in millimeters.
     """
     if SIM_MODE:
         print(f"[listener] SIM_MODE=ON — accepted GEOFENCE command (simulated)")
@@ -75,7 +75,7 @@ def send_geofence_command(latitude: float, longitude: float, radius: float, max_
     lat_long = int(latitude * 1e7)
     lon_long = int(longitude * 1e7)
     radius_long = int(radius)
-    alt_long = int(max_altitude)
+    alt_long = int(max_altitude * 1000)
 
     command = f"GEOFENCE,{lat_long},{lon_long},{radius_long},{alt_long}\n"
 
