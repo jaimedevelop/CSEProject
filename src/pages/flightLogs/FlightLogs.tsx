@@ -77,6 +77,9 @@ export default function FlightLogs() {
     const [error, setError] = useState(false);
     const [search, setSearch] = useState('');
     const [expanded, setExpanded] = useState<string | null>(null);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [showOnlyDet, setShowOnlyDet] = useState(false);
+    const PACKETS_PER_PAGE = 50;
 
     useEffect(() => {
         setDate(new Date().toISOString().slice(0, 10));
@@ -107,14 +110,30 @@ export default function FlightLogs() {
     }, [loadHistory]);
 
     const filtered = useMemo(() => {
+        let result = packets;
+        if (showOnlyDet) {
+            result = result.filter(p => p.det);
+        }
         const q = search.toLowerCase();
-        if (!q) return packets;
-        return packets.filter(p =>
-            (p.source ?? '').toLowerCase().includes(q) ||
-            p.latitude.toFixed(6).includes(q) ||
-            p.longitude.toFixed(6).includes(q)
-        );
-    }, [packets, search]);
+        if (q) {
+            result = result.filter(p =>
+                (p.source ?? '').toLowerCase().includes(q) ||
+                p.latitude.toFixed(6).includes(q) ||
+                p.longitude.toFixed(6).includes(q)
+            );
+        }
+        return [...result].reverse();
+    }, [packets, search, showOnlyDet]);
+
+    const totalPages = Math.ceil(filtered.length / PACKETS_PER_PAGE);
+    const paginatedPackets = useMemo(() => {
+        const start = (currentPage - 1) * PACKETS_PER_PAGE;
+        return filtered.slice(start, start + PACKETS_PER_PAGE);
+    }, [filtered, currentPage]);
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [search, showOnlyDet]);
 
     // ── Summary stats ────────────────────────────────────────────────────────
     const maxAltFt = packets.length
@@ -123,8 +142,8 @@ export default function FlightLogs() {
     const minRSSI = packets.length
         ? Math.min(...packets.map(p => p.rssi ?? 0))
         : null;
-    const firstPacket = packets[0] ?? null;
-    const lastPacket = packets[packets.length - 1] ?? null;
+    const firstPacket = packets[packets.length - 1] ?? null;
+    const lastPacket = packets[0] ?? null;
     const flightMinutes = (firstPacket && lastPacket && firstPacket !== lastPacket)
         ? Math.round((new Date(lastPacket.timestamp).getTime() - new Date(firstPacket.timestamp).getTime()) / 60_000)
         : null;
@@ -184,8 +203,8 @@ export default function FlightLogs() {
                 </div>
             )}
 
-            {/* ── Search ── */}
-            <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
+            {/* ── Search + Filters ── */}
+            <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
                 <input
                     className="input"
                     type="text"
@@ -194,8 +213,16 @@ export default function FlightLogs() {
                     onChange={e => setSearch(e.target.value)}
                     style={{ maxWidth: 300 }}
                 />
-                {search && (
-                    <span className="text-xs text-muted">{filtered.length} of {packets.length} shown</span>
+                <label style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', cursor: 'pointer' }}>
+                    <input
+                        type="checkbox"
+                        checked={showOnlyDet}
+                        onChange={e => setShowOnlyDet(e.target.checked)}
+                    />
+                    <span className="text-sm">Deflation events only</span>
+                </label>
+                {filtered.length !== packets.length && (
+                    <span className="text-xs text-muted">{filtered.length} of {packets.length} packets shown</span>
                 )}
             </div>
 
@@ -219,13 +246,13 @@ export default function FlightLogs() {
                             </tr>
                         </thead>
                         <tbody>
-                            {filtered.length === 0 && !loading ? (
+                            {paginatedPackets.length === 0 && !loading ? (
                                 <tr>
                                     <td colSpan={11} style={{ padding: 'var(--space-8)', textAlign: 'center', color: 'var(--color-text-muted)' }}>
                                         No packets match the current filter.
                                     </td>
                                 </tr>
-                            ) : filtered.map(p => {
+                            ) : paginatedPackets.map(p => {
                                 const key = p.timestamp;
                                 const isExpanded = expanded === key;
                                 const altFt = metersToFeet(p.altitude_m);
@@ -242,12 +269,14 @@ export default function FlightLogs() {
                                                 borderBottom: '1px solid var(--color-border)',
                                                 cursor: 'pointer',
                                                 transition: 'background var(--transition-fast)',
+                                                background: p.det ? 'rgba(220, 38, 38, 0.1)' : 'transparent',
                                             }}
-                                            onMouseEnter={ev => (ev.currentTarget.style.background = 'var(--color-bg-card-hover)')}
-                                            onMouseLeave={ev => (ev.currentTarget.style.background = 'transparent')}
+                                            onMouseEnter={ev => (ev.currentTarget.style.background = p.det ? 'rgba(220, 38, 38, 0.15)' : 'var(--color-bg-card-hover)')}
+                                            onMouseLeave={ev => (ev.currentTarget.style.background = p.det ? 'rgba(220, 38, 38, 0.1)' : 'transparent')}
                                         >
-                                            <td style={{ padding: 'var(--space-2) var(--space-3)', whiteSpace: 'nowrap', color: 'var(--color-text-secondary)' }}>
+                                            <td style={{ padding: 'var(--space-2) var(--space-3)', whiteSpace: 'nowrap', color: p.det ? 'var(--color-danger)' : 'var(--color-text-secondary)', fontWeight: p.det ? 'bold' : 'normal' }}>
                                                 {fmtTime(p.timestamp)}
+                                                {p.det && <span style={{ marginLeft: 'var(--space-1)' }}>🚨</span>}
                                             </td>
                                             <td style={{ padding: 'var(--space-2) var(--space-3)', color: altFt > 19000 ? 'var(--color-warning)' : 'var(--color-text-primary)' }}>
                                                 {altFt.toFixed(1)}
@@ -310,11 +339,34 @@ export default function FlightLogs() {
                     </table>
                 </div>
 
-                {/* Table footer */}
-                <div style={{ padding: 'var(--space-2) var(--space-4)', borderTop: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                {/* Table footer with pagination */}
+                <div style={{ padding: 'var(--space-3) var(--space-4)', borderTop: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-3)' }}>
                     <span className="text-xs text-muted">
-                        {filtered.length} packets · Click any row to expand · Data from GET /telemetry/history?date={date}
+                        {paginatedPackets.length} of {filtered.length} packets · Click any row to expand
                     </span>
+                    {totalPages > 1 && (
+                        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+                            <button
+                                className="btn btn-secondary"
+                                onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                                disabled={currentPage === 1}
+                                style={{ padding: 'var(--space-1) var(--space-2)', fontSize: 'var(--text-xs)' }}
+                            >
+                                ← Prev
+                            </button>
+                            <span className="text-xs text-muted">
+                                Page {currentPage} of {totalPages}
+                            </span>
+                            <button
+                                className="btn btn-secondary"
+                                onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                                disabled={currentPage === totalPages}
+                                style={{ padding: 'var(--space-1) var(--space-2)', fontSize: 'var(--text-xs)' }}
+                            >
+                                Next →
+                            </button>
+                        </div>
+                    )}
                     <span className="text-xs text-muted font-mono">{date}</span>
                 </div>
             </div>

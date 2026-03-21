@@ -6,8 +6,18 @@ import {
     type TelemetryPacket,
 } from '../../services/telemetry';
 
+// ─── Configuration ────────────────────────────────────────────────────────────
+
 const POLL_INTERVAL = 1_000; // ms — set to match packet cadence
 const MAX_TRAIL = 60;         // keep last N positions in trail
+
+/** Hardcoded geofence — will be made configurable from the webapp later */
+const HARDCODED_GEOFENCE = {
+    centerLat: 279640200 / 10_000_000,   // 27.964020°
+    centerLng: -822334100 / 10_000_000,  // -82.233410°
+    radiusMeters: 50_000,                // 50 km radius
+    maxAltMeters: 100,                   // 100 m ceiling
+};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -181,14 +191,16 @@ function SVGMap({ position, altitudeFt, heading, trail, geofence, cone, showTrai
 
 // ─── Map Page ─────────────────────────────────────────────────────────────────
 
-// Default center — will be replaced by first real GPS fix.
-// Using Tampa Bay area to match your sample data.
-const DEFAULT_CENTER: LatLng = { lat: 28.0, lng: -82.59 };
+// Default center — updated by first real GPS fix or uses hardcoded geofence
+const DEFAULT_CENTER: LatLng = { 
+    lat: HARDCODED_GEOFENCE.centerLat, 
+    lng: HARDCODED_GEOFENCE.centerLng 
+};
 
 const DEFAULT_GEOFENCE: GeofenceConfig = {
     center: DEFAULT_CENTER,
-    radiusFt: 5000,   // wide until we have a real fix to measure from
-    maxAltitude: 20_000,
+    radiusFt: HARDCODED_GEOFENCE.radiusMeters * 3.28084, // convert m to ft
+    maxAltitude: metersToFeet(HARDCODED_GEOFENCE.maxAltMeters),
 };
 
 export default function Map() {
@@ -228,13 +240,6 @@ export default function Map() {
         setLastUpdated(new Date());
         setNoData(false);
         prevPos.current = newPos;
-
-        // Pin geofence center on first real fix
-        setGeofence(prev =>
-            prev.center === DEFAULT_CENTER
-                ? { ...prev, center: newPos }
-                : prev
-        );
     }, []);
 
     const poll = useCallback(async () => {
@@ -247,6 +252,21 @@ export default function Map() {
         const id = setInterval(poll, POLL_INTERVAL);
         return () => clearInterval(id);
     }, [poll]);
+
+    // Calculate distance from balloon to geofence center
+    const distanceFromCenter = (() => {
+        if (noData) return null;
+        const dLat = position.lat - geofence.center.lat;
+        const dLng = position.lng - geofence.center.lng;
+        // Rough approximation: 1 degree lat ≈ 364,000 ft, 1 degree lng varies by latitude
+        const ftPerDegLat = 364_000;
+        const ftPerDegLng = Math.cos((position.lat * Math.PI) / 180) * 364_000;
+        const distFt = Math.sqrt(Math.pow(dLat * ftPerDegLat, 2) + Math.pow(dLng * ftPerDegLng, 2));
+        return distFt;
+    })();
+
+    const isWithinGeofence = distanceFromCenter != null && distanceFromCenter <= geofence.radiusFt;
+    const isWithinAltitude = altitudeFt <= geofence.maxAltitude;
 
     const handleShowCone = () => {
         setCone({ center: position, radiusFt: 300 + altitudeFt * 0.05, active: true });
@@ -310,11 +330,27 @@ export default function Map() {
                 </div>
 
                 <div className="card">
-                    <div className="card-title">Geofence Config</div>
+                    <div className="card-title">Geofence Status</div>
                     <div style={{ marginTop: 'var(--space-2)', display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <span className="font-mono text-sm">Radius: {geofence.radiusFt.toLocaleString()} ft</span>
+                        <span className="font-mono text-sm">Radius: {(geofence.radiusFt / 1000).toFixed(1)}k ft</span>
                         <span className="font-mono text-sm">Max Alt: {geofence.maxAltitude.toLocaleString()} ft</span>
-                        <span className="text-xs" style={{ color: 'var(--color-success)', marginTop: 4 }}>● Within bounds</span>
+                        {noData ? (
+                            <span className="text-xs" style={{ color: 'var(--color-text-muted)', marginTop: 4 }}>⏳ Waiting for GPS…</span>
+                        ) : (
+                            <>
+                                <span className="font-mono text-xs text-muted" style={{ marginTop: 4 }}>
+                                    Distance: {(distanceFromCenter! / 1000).toFixed(1)}k ft
+                                </span>
+                                <div style={{ display: 'flex', gap: 'var(--space-3)', marginTop: 6 }}>
+                                    <span className="text-xs" style={{ color: isWithinGeofence ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                        {isWithinGeofence ? '✓ Radius OK' : '✗ Outside bound'}
+                                    </span>
+                                    <span className="text-xs" style={{ color: isWithinAltitude ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                        {isWithinAltitude ? '✓ Alt OK' : '✗ Too high'}
+                                    </span>
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
 

@@ -46,14 +46,23 @@ function tiltLevel(deg: number | null): Level {
     return 'nominal';
 }
 
+function batteryLevel(v: number | null): Level {
+    if (v == null) return 'unknown';
+    if (v < 10) return 'critical';
+    if (v < 25) return 'warning';
+    return 'nominal';
+}
+
 function overallStatus(d: TelemetryPacket | null): 'nominal' | 'warning' | 'critical' | 'unknown' {
     if (!d) return 'unknown';
     const altFt = metersToFeet(d.altitude_m);
     const tilt = tiltAngle(d.accel_x, d.accel_y, d.accel_z);
     if (d.rssi != null && d.rssi < -110) return 'critical';
+    if (d.battery_pct != null && d.battery_pct < 10) return 'critical';
     if (
         altFt > 19000 ||
         tilt > 45 ||
+        (d.battery_pct != null && d.battery_pct < 25) ||
         (d.rssi != null && d.rssi < -95) ||
         (d.snr != null && d.snr < 0)
     ) return 'warning';
@@ -298,6 +307,7 @@ export default function Dashboard() {
             {/* ── Primary Telemetry Grid ── */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 'var(--space-4)' }}>
                 <TelemetryCard label="Altitude" value={fmt(altFt, 1)} unit="ft" level={altLevel(altFt)} />
+                <TelemetryCard label="Battery" value={fmt(data?.battery_pct ?? null, 1)} unit="%" level={batteryLevel(data?.battery_pct ?? null)} />
                 <TelemetryCard label="Signal (RSSI)" value={fmt(data?.rssi, 0)} unit="dBm" level={signalLevel(data?.rssi ?? null)} />
                 <TelemetryCard label="SNR" value={fmt(data?.snr, 1)} unit="dB" level={snrLevel(data?.snr ?? null)} />
                 <TelemetryCard label="Pressure" value={fmt(data?.pressure_hpa, 1)} unit="hPa" />

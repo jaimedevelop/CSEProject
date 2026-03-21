@@ -3,10 +3,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
-import json
 import os
 import requests
 from datetime import datetime
+from sqlalchemy import create_engine, Column, String, Float, Integer, Boolean, DateTime
+from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.sql import func
 
 app = FastAPI(title="Telemetry API")
 
@@ -18,25 +20,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-FLIGHT_LOGS_DIR = os.path.join(os.path.dirname(__file__), "flight_logs")
-os.makedirs(FLIGHT_LOGS_DIR, exist_ok=True)
 LISTENER_CONTROL_URL = os.environ.get("LISTENER_CONTROL_URL", "http://127.0.0.1:8765/control/pop")
 
-# In-memory store of the latest telemetry packet
+# ─── Database Setup ──────────────────────────────────────────────────────────
+DB_PATH = os.path.join(os.path.dirname(__file__), "telemetry.db")
+engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+class TelemetryPacketDB(Base):
+    __tablename__ = "telemetry_packets"
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(String, index=True)
+    log_date = Column(String, index=True)  # YYYY-MM-DD for date-based queries
+    latitude = Column(Float)
+    longitude = Column(Float)
+    altitude_m = Column(Float)
+    temperature_c = Column(Float)
+    humidity_pct = Column(Float, nullable=True)
+    pressure_hpa = Column(Float)
+    accel_x = Column(Float)
+    accel_y = Column(Float)
+    accel_z = Column(Float)
+    rssi = Column(Integer, nullable=True)
+    snr = Column(Float, nullable=True)
+    speed_mps = Column(Float, nullable=True)
+    heading_deg = Column(Float, nullable=True)
+    satellites_in_view = Column(Integer, nullable=True)
+    battery_pct = Column(Float, nullable=True)
+    stability_index = Column(Float, nullable=True)
+    det = Column(Boolean, nullable=True)
+    det_reason = Column(Integer, nullable=True)
+    det_reason_text = Column(String, nullable=True)
+    wind_gust_mph = Column(Float, nullable=True)
+    source = Column(String, default="lora")
+    created_at = Column(DateTime, server_default=func.now())
+
+# Create tables on startup
+Base.metadata.create_all(bind=engine)
+
+# In-memory store of the latest telemetry packet for efficient polling
 latest_telemetry: Optional[dict] = None
-
-
-def _packet_log_date(packet: dict) -> str:
-    """Choose the log file date using packet timestamp when possible."""
-    ts = packet.get("timestamp")
-    if isinstance(ts, str) and ts:
-        try:
-            # Accept both ...+00:00 and ...Z timestamp forms.
-            normalized = ts.replace("Z", "+00:00")
-            return datetime.fromisoformat(normalized).date().isoformat()
-        except ValueError:
-            pass
-    return datetime.utcnow().strftime("%Y-%m-%d")
 
 
 # -------------------------------------------------------------------
@@ -74,14 +98,52 @@ class TelemetryPacket(BaseModel):
 async def receive_telemetry(packet: TelemetryPacket):
     global latest_telemetry
     latest_telemetry = packet.model_dump()
-
-    # Persist every packet to a daily log file.
-    log_filename = _packet_log_date(latest_telemetry) + ".jsonl"
-    log_path = os.path.join(FLIGHT_LOGS_DIR, log_filename)
-    with open(log_path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(latest_telemetry) + "\n")
-
-    return {"status": "ok", "received_at": latest_telemetry["timestamp"]}
+    
+    # Extract log_date from timestamp
+    ts = packet.timestamp
+    if isinstance(ts, str) and ts:
+        try:
+            normalized = ts.replace("Z", "+00:00")
+            log_date = datetime.fromisoformat(normalized).date().isoformat()
+        except ValueError:
+            log_date = datetime.utcnow().strftime("%Y-%m-%d")
+    else:
+        log_date = datetime.utcnow().strftime("%Y-%m-%d")
+    
+    # Save to database
+    db = SessionLocal()
+    try:
+        db_packet = TelemetryPacketDB(
+            timestamp=packet.timestamp,
+            log_date=log_date,
+            latitude=packet.latitude,
+            longitude=packet.longitude,
+            altitude_m=packet.altitude_m,
+            temperature_c=packet.temperature_c,
+            humidity_pct=packet.humidity_pct,
+            pressure_hpa=packet.pressure_hpa,
+            accel_x=packet.accel_x,
+            accel_y=packet.accel_y,
+            accel_z=packet.accel_z,
+            rssi=packet.rssi,
+            snr=packet.snr,
+            speed_mps=packet.speed_mps,
+            heading_deg=packet.heading_deg,
+            satellites_in_view=packet.satellites_in_view,
+            battery_pct=packet.battery_pct,
+            stability_index=packet.stability_index,
+            det=packet.det,
+            det_reason=packet.det_reason,
+            det_reason_text=packet.det_reason_text,
+            wind_gust_mph=packet.wind_gust_mph,
+            source=packet.source or "lora",
+        )
+        db.add(db_packet)
+        db.commit()
+    finally:
+        db.close()
+    
+    return {"status": "ok", "received_at": packet.timestamp}
 
 
 # POST /deflate for manual deflation command
@@ -127,19 +189,43 @@ async def get_telemetry_history(date: Optional[str] = None):
     Defaults to today if no date param is provided.
     """
     target_date = date or datetime.utcnow().strftime("%Y-%m-%d")
-    log_path = os.path.join(FLIGHT_LOGS_DIR, f"{target_date}.jsonl")
-
-    if not os.path.exists(log_path):
-        return {"date": target_date, "packets": []}
-
-    packets = []
-    with open(log_path, "r") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                packets.append(json.loads(line))
-
-    return {"date": target_date, "packets": packets}
+    
+    db = SessionLocal()
+    try:
+        packets = db.query(TelemetryPacketDB).filter(
+            TelemetryPacketDB.log_date == target_date
+        ).order_by(TelemetryPacketDB.id).all()
+        
+        packet_dicts = [
+            {
+                "timestamp": p.timestamp,
+                "latitude": p.latitude,
+                "longitude": p.longitude,
+                "altitude_m": p.altitude_m,
+                "temperature_c": p.temperature_c,
+                "humidity_pct": p.humidity_pct,
+                "pressure_hpa": p.pressure_hpa,
+                "accel_x": p.accel_x,
+                "accel_y": p.accel_y,
+                "accel_z": p.accel_z,
+                "rssi": p.rssi,
+                "snr": p.snr,
+                "speed_mps": p.speed_mps,
+                "heading_deg": p.heading_deg,
+                "satellites_in_view": p.satellites_in_view,
+                "battery_pct": p.battery_pct,
+                "stability_index": p.stability_index,
+                "det": p.det,
+                "det_reason": p.det_reason,
+                "det_reason_text": p.det_reason_text,
+                "wind_gust_mph": p.wind_gust_mph,
+                "source": p.source,
+            }
+            for p in packets
+        ]
+        return {"date": target_date, "packets": packet_dicts}
+    finally:
+        db.close()
 
 
 # -------------------------------------------------------------------

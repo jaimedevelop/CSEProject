@@ -131,6 +131,12 @@ def parse_line(raw: str) -> dict | None:
             det_reason = int(raw_packet.get("detReason", 0))
             det_reason_text = DET_REASON_LABELS.get(det_reason, f"UNKNOWN_{det_reason}")
 
+            battery_pct = raw_packet.get("batt")
+            if battery_pct is None:
+                battery_pct = raw_packet.get("battery")
+            if battery_pct is None:
+                battery_pct = raw_packet.get("batteryPct")
+
             # Map C++ payload keys to backend API keys
             translated_packet = {
                 "timestamp":     datetime.now(timezone.utc).isoformat(),
@@ -148,7 +154,7 @@ def parse_line(raw: str) -> dict | None:
                 "speed_mps":     speed_mps,
                 "heading_deg":   heading_deg,
                 "satellites_in_view": raw_packet.get("siv"),
-                "battery_pct":   raw_packet.get("batt"),
+                "battery_pct":   battery_pct,
                 "stability_index": raw_packet.get("stability"),
                 "det":           bool(raw_packet.get("det", False)),
                 "det_reason":    det_reason,
@@ -156,7 +162,7 @@ def parse_line(raw: str) -> dict | None:
                 "wind_gust_mph": None,  # simulator-only field
                 "source":        "lora_radio"
             }
-            
+
             return translated_packet
 
         except json.JSONDecodeError as e:

@@ -115,3 +115,4 @@ dist-ssr
 
 # Backend
 *venv
+*.pyc
