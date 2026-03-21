@@ -37,6 +37,14 @@ export interface FlightSummary {
     started_at: string;
     ended_at?: string | null;
     packet_count: number;
+    geofence_latitude?: number | null;
+    geofence_longitude?: number | null;
+    geofence_radius_m?: number | null;
+    geofence_max_altitude_m?: number | null;
+}
+
+export interface FlightMapSelection {
+    flightId: string;
 }
 
 export type FetchState =
@@ -166,11 +174,22 @@ export async function fetchFlightStatus(): Promise<FlightSummary | null> {
     }
 }
 
-export async function startFlight(): Promise<FlightSummary | null> {
+export async function startFlight(geofence?: {
+    latitude: number;
+    longitude: number;
+    radius: number;
+    maxAltitude: number;
+}): Promise<FlightSummary | null> {
     try {
         const res = await fetch(`${API_BASE}/flights/start`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(geofence ? {
+                geofence_latitude: geofence.latitude,
+                geofence_longitude: geofence.longitude,
+                geofence_radius_m: geofence.radius,
+                geofence_max_altitude_m: geofence.maxAltitude,
+            } : {}),
         });
         if (!res.ok) return null;
         const data: unknown = await res.json();
@@ -235,5 +254,32 @@ export async function fetchFlightPackets(flightId: string): Promise<{ flight: Fl
         return { flight, packets };
     } catch {
         return { flight: null, packets: [] };
+    }
+}
+
+const MAP_REPLAY_KEY = 'mapReplaySelection';
+
+export function setMapReplaySelection(selection: FlightMapSelection | null): void {
+    if (!selection) {
+        localStorage.removeItem(MAP_REPLAY_KEY);
+        return;
+    }
+    localStorage.setItem(MAP_REPLAY_KEY, JSON.stringify(selection));
+}
+
+export function getMapReplaySelection(): FlightMapSelection | null {
+    try {
+        const raw = localStorage.getItem(MAP_REPLAY_KEY);
+        if (!raw) return null;
+        const parsed: unknown = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' && 'flightId' in parsed) {
+            const flightId = (parsed as { flightId?: unknown }).flightId;
+            if (typeof flightId === 'string' && flightId.length > 0) {
+                return { flightId };
+            }
+        }
+        return null;
+    } catch {
+        return null;
     }
 }

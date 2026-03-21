@@ -66,6 +66,10 @@ class FlightDB(Base):
     name = Column(String, nullable=False)
     started_at = Column(String, nullable=False)
     ended_at = Column(String, nullable=True)
+    geofence_latitude = Column(Float, nullable=True)
+    geofence_longitude = Column(Float, nullable=True)
+    geofence_radius_m = Column(Float, nullable=True)
+    geofence_max_altitude_m = Column(Float, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
 # Create tables on startup
@@ -86,6 +90,17 @@ def ensure_schema_compatibility() -> None:
 
         if "calculated_wind_gust_mph" not in existing_cols:
             conn.execute(text("ALTER TABLE telemetry_packets ADD COLUMN calculated_wind_gust_mph FLOAT"))
+
+        flight_rows = conn.execute(text("PRAGMA table_info(flights)")).fetchall()
+        flight_cols = {row[1] for row in flight_rows}
+        if "geofence_latitude" not in flight_cols:
+            conn.execute(text("ALTER TABLE flights ADD COLUMN geofence_latitude FLOAT"))
+        if "geofence_longitude" not in flight_cols:
+            conn.execute(text("ALTER TABLE flights ADD COLUMN geofence_longitude FLOAT"))
+        if "geofence_radius_m" not in flight_cols:
+            conn.execute(text("ALTER TABLE flights ADD COLUMN geofence_radius_m FLOAT"))
+        if "geofence_max_altitude_m" not in flight_cols:
+            conn.execute(text("ALTER TABLE flights ADD COLUMN geofence_max_altitude_m FLOAT"))
 
         if "source" in existing_cols:
             try:
@@ -141,6 +156,17 @@ class FlightSummary(BaseModel):
     started_at: str
     ended_at: Optional[str] = None
     packet_count: int
+    geofence_latitude: Optional[float] = None
+    geofence_longitude: Optional[float] = None
+    geofence_radius_m: Optional[float] = None
+    geofence_max_altitude_m: Optional[float] = None
+
+
+class FlightStartRequest(BaseModel):
+    geofence_latitude: Optional[float] = None
+    geofence_longitude: Optional[float] = None
+    geofence_radius_m: Optional[float] = None
+    geofence_max_altitude_m: Optional[float] = None
 
 
 def get_active_flight(db) -> Optional[FlightDB]:
@@ -216,6 +242,10 @@ def serialize_flight(flight: FlightDB, packet_count: int) -> dict:
         "started_at": flight.started_at,
         "ended_at": flight.ended_at,
         "packet_count": packet_count,
+        "geofence_latitude": flight.geofence_latitude,
+        "geofence_longitude": flight.geofence_longitude,
+        "geofence_radius_m": flight.geofence_radius_m,
+        "geofence_max_altitude_m": flight.geofence_max_altitude_m,
     }
 
 
@@ -333,7 +363,7 @@ async def receive_telemetry(packet: TelemetryPacket):
 
 
 @app.post("/flights/start")
-async def start_flight():
+async def start_flight(payload: Optional[FlightStartRequest] = None):
     db = SessionLocal()
     try:
         active = get_active_flight(db)
@@ -350,6 +380,10 @@ async def start_flight():
             name=flight_name,
             started_at=now_iso,
             ended_at=None,
+            geofence_latitude=payload.geofence_latitude if payload else None,
+            geofence_longitude=payload.geofence_longitude if payload else None,
+            geofence_radius_m=payload.geofence_radius_m if payload else None,
+            geofence_max_altitude_m=payload.geofence_max_altitude_m if payload else None,
         )
         db.add(flight)
         db.commit()

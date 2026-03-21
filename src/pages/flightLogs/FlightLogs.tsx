@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import '../../styles/theme.css';
 import { GeofenceModal, type GeofenceInput } from './GeofenceModal';
 import {
@@ -8,6 +9,7 @@ import {
     fetchFlightStatus,
     startFlight,
     sendGeofence,
+    setMapReplaySelection,
     tiltAngle,
     type FlightSummary,
     type TelemetryPacket,
@@ -92,6 +94,7 @@ function SummaryCard({ label, value, unit, sub }: { label: string; value: string
 }
 
 export default function FlightLogs() {
+    const navigate = useNavigate();
     const [flights, setFlights] = useState<FlightSummary[]>([]);
     const [activeFlight, setActiveFlight] = useState<FlightSummary | null>(null);
     const [selectedFlightId, setSelectedFlightId] = useState<string | null>(null);
@@ -218,7 +221,7 @@ export default function FlightLogs() {
 
         // Then start the flight
         setActionBusy(true);
-        const flight = await startFlight();
+        const flight = await startFlight(geofence);
         await refreshFlights();
         if (flight) {
             setSelectedFlightId(flight.id);
@@ -242,6 +245,11 @@ export default function FlightLogs() {
             await loadPackets(true);
         }
         setActionBusy(false);
+    };
+
+    const handleShowFlightOnMap = (flightId: string) => {
+        setMapReplaySelection({ flightId });
+        navigate('/map');
     };
 
     const filtered = useMemo(() => {
@@ -273,7 +281,7 @@ export default function FlightLogs() {
     const previousFlights = flights.filter(f => !activeFlight || f.id !== activeFlight.id);
 
     return (
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 'var(--space-4)', maxWidth: 1400 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 380px', gap: 'var(--space-4)', maxWidth: 1500 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 'var(--space-3)' }}>
                     <div>
@@ -573,27 +581,53 @@ export default function FlightLogs() {
                     ) : previousFlights.map(f => {
                         const selected = selectedFlightId === f.id;
                         return (
-                            <button
+                            <div
                                 key={f.id}
-                                className={`btn ${selected ? 'btn-primary' : 'btn-ghost'}`}
                                 style={{
-                                    justifyContent: 'flex-start',
-                                    textAlign: 'left',
                                     display: 'flex',
-                                    flexDirection: 'column',
-                                    alignItems: 'flex-start',
-                                    gap: 2,
+                                    alignItems: 'stretch',
+                                    gap: 'var(--space-2)',
+                                    width: '100%',
                                 }}
-                                onClick={() => setSelectedFlightId(f.id)}
                             >
-                                <span style={{ fontWeight: 600 }}>{f.name}</span>
-                                <span className="text-xs" style={{ opacity: 0.85 }}>
-                                    {fmtDateTime(f.started_at)}
-                                </span>
-                                <span className="text-xs" style={{ opacity: 0.85 }}>
-                                    {f.packet_count} packets · {fmtDuration(f.started_at, f.ended_at)}
-                                </span>
-                            </button>
+                                <button
+                                    className={`btn ${selected ? 'btn-primary' : 'btn-ghost'}`}
+                                    style={{
+                                        flex: 1,
+                                        minWidth: 0,
+                                        justifyContent: 'flex-start',
+                                        textAlign: 'left',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        alignItems: 'flex-start',
+                                        gap: 2,
+                                    }}
+                                    onClick={() => setSelectedFlightId(f.id)}
+                                >
+                                    <span style={{ fontWeight: 600 }}>{f.name}</span>
+                                    <span className="text-xs" style={{ opacity: 0.85 }}>
+                                        {fmtDateTime(f.started_at)}
+                                    </span>
+                                    <span className="text-xs" style={{ opacity: 0.85 }}>
+                                        {f.packet_count} packets · {fmtDuration(f.started_at, f.ended_at)}
+                                    </span>
+                                </button>
+                                <button
+                                    className="btn btn-secondary"
+                                    style={{
+                                        minWidth: 42,
+                                        padding: 'var(--space-2)',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                    }}
+                                    title={`Show ${f.name} on map`}
+                                    aria-label={`Show ${f.name} on map`}
+                                    onClick={() => handleShowFlightOnMap(f.id)}
+                                >
+                                    🗺️
+                                </button>
+                            </div>
                         );
                     })}
                 </div>

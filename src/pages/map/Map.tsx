@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Circle, CircleMarker, MapContainer, Polyline, TileLayer, Tooltip, useMap } from 'react-leaflet';
+import { Circle, CircleMarker, MapContainer, Polyline, ScaleControl, TileLayer, Tooltip, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import '../../styles/theme.css';
 import {
     fetchFlightPackets,
     fetchFlightStatus,
     fetchLatestTelemetry,
+    getMapReplaySelection,
     metersToFeet,
+    setMapReplaySelection,
     type TelemetryPacket,
 } from '../../services/telemetry';
 
@@ -99,12 +101,14 @@ function LiveTileMap({ position, altitudeFt, heading, trail, geofence, cone, sho
         }}>
             <MapContainer
                 center={[position.lat, position.lng]}
-                zoom={12}
+                zoom={19}
                 minZoom={4}
                 maxZoom={22}
                 scrollWheelZoom
                 style={{ height: '100%', width: '100%' }}
             >
+                <ScaleControl position="bottomleft" imperial={false} />
+
                 {/* Free, no-key satellite raster tiles. */}
                 <TileLayer
                     url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
@@ -229,6 +233,7 @@ export default function Map() {
     const [noData, setNoData] = useState(true);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
     const [activeFlightName, setActiveFlightName] = useState<string | null>(null);
+    const [replayFlightName, setReplayFlightName] = useState<string | null>(null);
     const prevPos = useRef<LatLng | null>(null);
 
     const applyPacket = useCallback((p: TelemetryPacket) => {
@@ -313,6 +318,52 @@ export default function Map() {
         prevPos.current = latestPos;
     }, []);
 
+    const syncReplayFlight = useCallback(async (flightId: string) => {
+        const { flight, packets } = await fetchFlightPackets(flightId);
+        if (!flight) {
+            setMapReplaySelection(null);
+            setReplayFlightName(null);
+            return;
+        }
+
+        setReplayFlightName(flight.name);
+        setActiveFlightName(null);
+
+        const fullTrail = packets.map(p => ({ lat: p.latitude, lng: p.longitude, det: Boolean(p.det) }));
+        setTrail(fullTrail);
+
+        if (
+            flight.geofence_latitude != null &&
+            flight.geofence_longitude != null &&
+            flight.geofence_radius_m != null &&
+            flight.geofence_max_altitude_m != null
+        ) {
+            setGeofence({
+                center: { lat: flight.geofence_latitude, lng: flight.geofence_longitude },
+                radiusFt: metersToFeet(flight.geofence_radius_m),
+                maxAltitude: metersToFeet(flight.geofence_max_altitude_m),
+            });
+        }
+
+        const latest = packets[packets.length - 1];
+        if (!latest) {
+            setNoData(true);
+            return;
+        }
+
+        const latestPos: LatLng = { lat: latest.latitude, lng: latest.longitude };
+        setPosition(latestPos);
+        setAltitudeFt(metersToFeet(latest.altitude_m));
+        if (latest.heading_deg != null) {
+            const wrapped = ((latest.heading_deg % 360) + 360) % 360;
+            setHeading(wrapped);
+        }
+        const ts = new Date(latest.timestamp);
+        setLastUpdated(Number.isNaN(ts.getTime()) ? new Date() : ts);
+        setNoData(false);
+        prevPos.current = latestPos;
+    }, []);
+
     const pollLiveMarker = useCallback(async () => {
         const result = await fetchLatestTelemetry();
         if (result.status === 'ok') applyPacket(result.data);
@@ -320,6 +371,12 @@ export default function Map() {
 
     useEffect(() => {
         const tick = async () => {
+            const replay = getMapReplaySelection();
+            if (replay) {
+                await syncReplayFlight(replay.flightId);
+                return;
+            }
+            setReplayFlightName(null);
             await pollLiveMarker();
             await syncCurrentFlightTrail();
         };
@@ -329,7 +386,7 @@ export default function Map() {
             void tick();
         }, POLL_INTERVAL);
         return () => clearInterval(id);
-    }, [pollLiveMarker, syncCurrentFlightTrail]);
+    }, [pollLiveMarker, syncCurrentFlightTrail, syncReplayFlight]);
 
     // Listen for geofence changes from localStorage
     useEffect(() => {
@@ -372,6 +429,11 @@ export default function Map() {
         setShowCone(true);
     };
 
+    const handleExitReplay = () => {
+        setMapReplaySelection(null);
+        setReplayFlightName(null);
+    };
+
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', maxWidth: 1000 }}>
 
@@ -387,7 +449,11 @@ export default function Map() {
                             : 'Waiting for first GPS fix…'}
                     </p>
                     <p className="text-secondary text-sm" style={{ marginTop: 2 }}>
-                        {activeFlightName ? `Trail source: ${activeFlightName} (current flight, full path)` : 'Trail source: no active flight'}
+                        {replayFlightName
+                            ? `Trail source: ${replayFlightName} (replay mode)`
+                            : activeFlightName
+                                ? `Trail source: ${activeFlightName} (current flight, full path)`
+                                : 'Trail source: no active flight'}
                     </p>
                 </div>
                 <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
@@ -405,6 +471,25 @@ export default function Map() {
                     </button>
                 </div>
             </div>
+
+            {replayFlightName && (
+                <button
+                    className="alert-banner alert-banner-warning"
+                    onClick={handleExitReplay}
+                    title="Exit replay mode"
+                    style={{
+                        width: '100%',
+                        justifyContent: 'space-between',
+                        fontSize: 'var(--text-base)',
+                        fontWeight: 'var(--font-semi)',
+                        padding: 'var(--space-3) var(--space-4)',
+                        cursor: 'pointer',
+                    }}
+                >
+                    <span>⏪ REPLAY MODE: {replayFlightName}</span>
+                    <span>Click to exit</span>
+                </button>
+            )}
 
             {/* ── Live Tile Map ── */}
             <LiveTileMap
