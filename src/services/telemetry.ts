@@ -29,7 +29,6 @@ export interface TelemetryPacket {
     pressure_drop_3h_mb?: number | null;
     pressure_drop_warning?: boolean | null;
     wind_gust_warning?: boolean | null;
-    source: string | null;
 }
 
 export interface FlightSummary {

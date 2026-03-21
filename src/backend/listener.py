@@ -172,7 +172,6 @@ def parse_line(raw: str) -> dict | None:
                 "det":           bool(raw_packet.get("det", False)),
                 "det_reason":    det_reason,
                 "det_reason_text": det_reason_text,
-                "source":        "lora_radio"
             }
 
             return translated_packet

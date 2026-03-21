@@ -44,7 +44,7 @@ function exportCSV(packets: TelemetryPacket[], flightLabel: string) {
         'timestamp', 'latitude', 'longitude', 'altitude_m', 'altitude_ft',
         'temperature_c', 'pressure_hpa',
         'accel_x', 'accel_y', 'accel_z', 'tilt_deg', 'stability_index',
-        'rssi', 'snr', 'satellites_in_view', 'wind_gust_mph', 'calculated_wind_gust_mph', 'source',
+        'rssi', 'snr', 'satellites_in_view', 'wind_gust_mph', 'calculated_wind_gust_mph',
     ];
 
     const rows = packets.map(p => [
@@ -65,7 +65,6 @@ function exportCSV(packets: TelemetryPacket[], flightLabel: string) {
         p.satellites_in_view ?? '',
         p.wind_gust_mph ?? '',
         p.calculated_wind_gust_mph ?? '',
-        p.source ?? '',
     ].join(','));
 
     const csv = [headers.join(','), ...rows].join('\n');
@@ -221,7 +220,6 @@ export default function FlightLogs() {
         const q = search.toLowerCase();
         if (q) {
             result = result.filter(p =>
-                (p.source ?? '').toLowerCase().includes(q) ||
                 p.latitude.toFixed(6).includes(q) ||
                 p.longitude.toFixed(6).includes(q),
             );
@@ -332,7 +330,7 @@ export default function FlightLogs() {
                     <input
                         className="input"
                         type="text"
-                        placeholder="Search by source, lat, lng…"
+                        placeholder="Search by lat, lng…"
                         value={search}
                         onChange={e => setSearch(e.target.value)}
                         style={{ maxWidth: 300 }}
@@ -355,7 +353,7 @@ export default function FlightLogs() {
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)' }}>
                             <thead>
                                 <tr style={{ background: 'var(--color-bg-panel)', borderBottom: '1px solid var(--color-border)' }}>
-                                    {['Time', 'Alt (ft)', 'Temp (°C)', 'Pressure', 'Tilt (°)', 'Stability', 'RSSI', 'SNR', 'SIV', 'Calc Gust', 'Lat', 'Lng', 'Source'].map(h => (
+                                    {['Time', 'Alt (ft)', 'Temp (°C)', 'Pressure', 'Tilt (°)', 'Stability', 'RSSI', 'SNR', 'SIV', 'Calc Gust', 'Lat', 'Lng'].map(h => (
                                         <th key={h} style={{
                                             padding: 'var(--space-2) var(--space-3)',
                                             textAlign: 'left',
@@ -371,7 +369,7 @@ export default function FlightLogs() {
                             <tbody>
                                 {paginatedPackets.length === 0 && !loading ? (
                                     <tr>
-                                        <td colSpan={13} style={{ padding: 'var(--space-8)', textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                                        <td colSpan={12} style={{ padding: 'var(--space-8)', textAlign: 'center', color: 'var(--color-text-muted)' }}>
                                             No packets match the current filter.
                                         </td>
                                     </tr>
@@ -426,14 +424,11 @@ export default function FlightLogs() {
                                                 </td>
                                                 <td style={{ padding: 'var(--space-2) var(--space-3)' }}>{p.latitude.toFixed(5)}</td>
                                                 <td style={{ padding: 'var(--space-2) var(--space-3)' }}>{p.longitude.toFixed(5)}</td>
-                                                <td style={{ padding: 'var(--space-2) var(--space-3)', color: 'var(--color-text-muted)' }}>
-                                                    {p.source ?? '—'}
-                                                </td>
                                             </tr>
 
                                             {isExpanded && (
                                                 <tr key={`${key}-exp`} style={{ background: 'var(--color-bg-panel)', borderBottom: '1px solid var(--color-border)' }}>
-                                                    <td colSpan={13} style={{ padding: 'var(--space-3) var(--space-4)' }}>
+                                                    <td colSpan={12} style={{ padding: 'var(--space-3) var(--space-4)' }}>
                                                         <div style={{ display: 'flex', gap: 'var(--space-6)', flexWrap: 'wrap', fontSize: 'var(--text-xs)' }}>
                                                             {[
                                                                 { k: 'Timestamp', v: p.timestamp },
@@ -451,7 +446,13 @@ export default function FlightLogs() {
                                                                 { k: 'SNR', v: p.snr != null ? `${p.snr.toFixed(1)} dB` : '—' },
                                                                 { k: 'Satellites In View', v: p.satellites_in_view != null ? String(p.satellites_in_view) : '—' },
                                                                 { k: 'Calc Wind Gust', v: p.calculated_wind_gust_mph != null ? `${p.calculated_wind_gust_mph.toFixed(1)} mph` : '—' },
-                                                                { k: 'Source', v: p.source ?? '—' },
+                                                                { k: 'Detonation', v: p.det ? 'YES' : 'NO' },
+                                                                {
+                                                                    k: 'Det Reason',
+                                                                    v: p.det
+                                                                        ? (p.det_reason_text ?? (p.det_reason != null ? String(p.det_reason) : 'UNKNOWN'))
+                                                                        : 'NONE',
+                                                                },
                                                             ].map(({ k, v }) => (
                                                                 <div key={k} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                                                     <span style={{ color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{k}</span>

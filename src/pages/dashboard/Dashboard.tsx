@@ -348,7 +348,7 @@ export default function Dashboard() {
                         ))}
                         <div style={{ marginTop: 'var(--space-2)', paddingTop: 'var(--space-2)', borderTop: '1px solid var(--color-border)' }}>
                             <span className="text-xs text-muted">
-                                {data?.source ? `Source: ${data.source}` : 'No source'} · Updated every {POLL_INTERVAL}s
+                                Updated every {POLL_INTERVAL}s
                             </span>
                         </div>
                     </div>

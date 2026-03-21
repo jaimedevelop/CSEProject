@@ -40,7 +40,6 @@ def simulate_flight():
             "rssi":          random.randint(-120, -60),
             "snr":           round(random.uniform(3.0, 10.0), 1),
             "satellites_in_view": random.randint(6, 18),
-            "source":        "simulator",
         }
 
         sys.stdout.write(json.dumps(packet) + "\n")

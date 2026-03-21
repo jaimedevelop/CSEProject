@@ -3,17 +3,16 @@ import { Circle, CircleMarker, MapContainer, Polyline, TileLayer, Tooltip, useMa
 import 'leaflet/dist/leaflet.css';
 import '../../styles/theme.css';
 import {
+    fetchFlightPackets,
+    fetchFlightStatus,
     fetchLatestTelemetry,
-    fetchTelemetryHistory,
     metersToFeet,
-    todayDateString,
     type TelemetryPacket,
 } from '../../services/telemetry';
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
 const POLL_INTERVAL = 1_000; // ms — set to match packet cadence
-const MAX_TRAIL = 500;         // keep last N positions in trail
 
 /** Hardcoded geofence — will be made configurable from the webapp later */
 const HARDCODED_GEOFENCE = {
@@ -184,8 +183,8 @@ export default function Map() {
     const [showGeofence, setShowGeofence] = useState(true);
     const [noData, setNoData] = useState(true);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+    const [activeFlightName, setActiveFlightName] = useState<string | null>(null);
     const prevPos = useRef<LatLng | null>(null);
-    const seededFromHistory = useRef(false);
 
     const applyPacket = useCallback((p: TelemetryPacket) => {
         const newPos: LatLng = { lat: p.latitude, lng: p.longitude };
@@ -204,7 +203,6 @@ export default function Map() {
             }
         }
 
-        setTrail(prev => [...prev.slice(-(MAX_TRAIL - 1)), newPos]);
         setPosition(newPos);
         setAltitudeFt(newAlt);
         setLastUpdated(new Date());
@@ -212,25 +210,25 @@ export default function Map() {
         prevPos.current = newPos;
     }, []);
 
-    const poll = useCallback(async () => {
-        const result = await fetchLatestTelemetry();
-        if (result.status === 'ok') applyPacket(result.data);
-    }, [applyPacket]);
+    const syncCurrentFlightTrail = useCallback(async () => {
+        const active = await fetchFlightStatus();
+        if (!active) {
+            setActiveFlightName(null);
+            setTrail([]);
+            return;
+        }
 
-    const loadRecentTrailFromLogs = useCallback(async () => {
-        const packets = await fetchTelemetryHistory(todayDateString());
-        if (packets.length === 0) return;
-
-        const recentTrail = packets
-            .slice(-MAX_TRAIL)
-            .map(p => ({ lat: p.latitude, lng: p.longitude }));
-        setTrail(recentTrail);
+        setActiveFlightName(active.name);
+        const { packets } = await fetchFlightPackets(active.id);
+        const fullTrail = packets.map(p => ({ lat: p.latitude, lng: p.longitude }));
+        setTrail(fullTrail);
 
         const latest = packets[packets.length - 1];
+        if (!latest) return;
+
         const latestPos: LatLng = { lat: latest.latitude, lng: latest.longitude };
         setPosition(latestPos);
         setAltitudeFt(metersToFeet(latest.altitude_m));
-
         if (latest.heading_deg != null) {
             const wrapped = ((latest.heading_deg % 360) + 360) % 360;
             setHeading(wrapped);
@@ -242,16 +240,23 @@ export default function Map() {
         prevPos.current = latestPos;
     }, []);
 
-    useEffect(() => {
-        if (!seededFromHistory.current) {
-            seededFromHistory.current = true;
-            void loadRecentTrailFromLogs();
-        }
+    const pollLiveMarker = useCallback(async () => {
+        const result = await fetchLatestTelemetry();
+        if (result.status === 'ok') applyPacket(result.data);
+    }, [applyPacket]);
 
-        poll();
-        const id = setInterval(poll, POLL_INTERVAL);
+    useEffect(() => {
+        const tick = async () => {
+            await pollLiveMarker();
+            await syncCurrentFlightTrail();
+        };
+
+        void tick();
+        const id = setInterval(() => {
+            void tick();
+        }, POLL_INTERVAL);
         return () => clearInterval(id);
-    }, [loadRecentTrailFromLogs, poll]);
+    }, [pollLiveMarker, syncCurrentFlightTrail]);
 
     // Calculate distance from balloon to geofence center
     const distanceFromCenter = (() => {
@@ -286,6 +291,9 @@ export default function Map() {
                         {lastUpdated
                             ? `Last GPS fix: ${lastUpdated.toLocaleTimeString()} · polling every ${POLL_INTERVAL / 1000}s`
                             : 'Waiting for first GPS fix…'}
+                    </p>
+                    <p className="text-secondary text-sm" style={{ marginTop: 2 }}>
+                        {activeFlightName ? `Trail source: ${activeFlightName} (current flight, full path)` : 'Trail source: no active flight'}
                     </p>
                 </div>
                 <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>

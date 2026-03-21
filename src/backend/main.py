@@ -57,7 +57,6 @@ class TelemetryPacketDB(Base):
     det_reason_text = Column(String, nullable=True)
     wind_gust_mph = Column(Float, nullable=True)
     calculated_wind_gust_mph = Column(Float, nullable=True)
-    source = Column(String, default="lora")
     created_at = Column(DateTime, server_default=func.now())
 
 
@@ -87,6 +86,13 @@ def ensure_schema_compatibility() -> None:
 
         if "calculated_wind_gust_mph" not in existing_cols:
             conn.execute(text("ALTER TABLE telemetry_packets ADD COLUMN calculated_wind_gust_mph FLOAT"))
+
+        if "source" in existing_cols:
+            try:
+                conn.execute(text("ALTER TABLE telemetry_packets DROP COLUMN source"))
+            except Exception:
+                # Older SQLite builds may not support DROP COLUMN; treat as best-effort cleanup.
+                pass
 
 
 ensure_schema_compatibility()
@@ -120,7 +126,6 @@ class TelemetryPacket(BaseModel):
     det_reason: Optional[int] = None
     det_reason_text: Optional[str] = None
     wind_gust_mph: Optional[float] = None  # simulator compatibility
-    source: Optional[str] = "lora"   # "lora" | "serial" | "simulator"
 
 
 class FlightSummary(BaseModel):
@@ -159,7 +164,6 @@ def serialize_packet(p: TelemetryPacketDB) -> dict:
         "det_reason_text": p.det_reason_text,
         "wind_gust_mph": p.wind_gust_mph,
         "calculated_wind_gust_mph": p.calculated_wind_gust_mph,
-        "source": p.source,
     }
 
 
@@ -214,6 +218,7 @@ def serialize_flight(flight: FlightDB, packet_count: int) -> dict:
 @app.post("/telemetry", status_code=201)
 async def receive_telemetry(packet: TelemetryPacket):
     global latest_telemetry
+    active_flight_id: Optional[str] = None
     
     # Extract log_date from timestamp
     ts = packet.timestamp
@@ -254,8 +259,10 @@ async def receive_telemetry(packet: TelemetryPacket):
                 "message": "No active flight; packet not persisted",
             }
 
+        active_flight_id = active_flight.id
+
         db_packet = TelemetryPacketDB(
-            flight_id=active_flight.id,
+            flight_id=active_flight_id,
             timestamp=packet.timestamp,
             log_date=log_date,
             latitude=packet.latitude,
@@ -279,7 +286,6 @@ async def receive_telemetry(packet: TelemetryPacket):
             det_reason_text=packet.det_reason_text,
             wind_gust_mph=packet.wind_gust_mph,
             calculated_wind_gust_mph=calculated_wind_gust_mph,
-            source=packet.source or "lora",
         )
         db.add(db_packet)
         db.commit()
@@ -290,7 +296,7 @@ async def receive_telemetry(packet: TelemetryPacket):
         "status": "ok",
         "received_at": packet.timestamp,
         "saved": True,
-        "flight_id": active_flight.id,
+        "flight_id": active_flight_id,
     }
 
 
