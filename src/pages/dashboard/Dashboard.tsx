@@ -49,7 +49,7 @@ function tiltLevel(deg: number | null): Level {
 function batteryLevel(v: number | null): Level {
     if (v == null) return 'unknown';
     if (v < 10) return 'critical';
-    if (v < 25) return 'warning';
+    if (v < 20) return 'warning';
     return 'nominal';
 }
 
@@ -62,7 +62,7 @@ function overallStatus(d: TelemetryPacket | null): 'nominal' | 'warning' | 'crit
     if (
         altM > ALT_WARN_M ||
         tilt > 45 ||
-        (d.battery_pct != null && d.battery_pct < 25) ||
+        (d.battery_pct != null && d.battery_pct < 20) ||
         (d.rssi != null && d.rssi < -95) ||
         (d.snr != null && d.snr < 0)
     ) return 'warning';
@@ -77,6 +77,9 @@ function deriveAlerts(d: TelemetryPacket): Alert[] {
     const alerts: Alert[] = [];
     const altM = d.altitude_m;
     const tilt = tiltAngle(d.accel_x, d.accel_y, d.accel_z);
+
+    if (d.battery_pct != null && d.battery_pct < 20)
+        alerts.push({ id: 'batt-warn', level: 'danger', message: `Battery low: ${d.battery_pct.toFixed(1)}%` });
 
     if (d.rssi != null && d.rssi < -110)
         alerts.push({ id: 'sig-crit', level: 'danger', message: `Signal critical: ${d.rssi} dBm — approaching loss-of-comms threshold.` });

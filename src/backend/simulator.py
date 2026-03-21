@@ -6,8 +6,8 @@ import random
 import sys
 from datetime import datetime, timezone
 
-BASE_LAT  = 27.9947
-BASE_LON  = -82.5943
+BASE_LAT  = 0
+BASE_LON  = 0
 MAX_ALT   = 3000.0    # metres
 INTERVAL  = 30        # seconds between packets
 

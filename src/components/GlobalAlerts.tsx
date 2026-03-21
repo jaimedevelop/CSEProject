@@ -28,6 +28,22 @@ function detReasonLabel(packet: TelemetryPacket): string {
 function deriveGlobalAlerts(d: TelemetryPacket): Alert[] {
     const alerts: Alert[] = [];
 
+    if (d.battery_pct != null && d.battery_pct < 20) {
+        alerts.push({
+            id: 'batt-warn',
+            level: 'danger',
+            message: `Battery low: ${d.battery_pct.toFixed(1)}%`,
+        });
+    }
+
+    if (d.rssi != null && d.rssi < -110) {
+        alerts.push({
+            id: 'sig-crit',
+            level: 'danger',
+            message: `Signal critical: ${d.rssi} dBm — approaching loss-of-comms.`,
+        });
+    }
+
     if (d.det) {
         alerts.push({
             id: 'det-fired',

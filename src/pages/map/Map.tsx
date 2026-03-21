@@ -78,7 +78,7 @@ interface LiveTileMapProps {
 }
 
 function LiveTileMap({ position, altitudeFt, heading, trail, geofence, cone, showTrail, showCone, showGeofence, noData }: LiveTileMapProps) {
-    const headingPoint = projectHeadingPoint(position, heading, 200);
+    const headingPoint = projectHeadingPoint(position, heading, 20);
 
     return (
         <div style={{
@@ -107,7 +107,7 @@ function LiveTileMap({ position, altitudeFt, heading, trail, geofence, cone, sho
 
                 {!noData && <RecenterOnPosition position={position} noData={noData} />}
 
-                {showGeofence && (
+                {showGeofence && geofence.radiusFt > 0 && (
                     <Circle
                         center={[geofence.center.lat, geofence.center.lng]}
                         radius={feetToMeters(geofence.radiusFt)}
@@ -168,9 +168,9 @@ const DEFAULT_CENTER: LatLng = {
 };
 
 const DEFAULT_GEOFENCE: GeofenceConfig = {
-    center: DEFAULT_CENTER,
-    radiusFt: HARDCODED_GEOFENCE.radiusMeters * 3.28084, // convert m to ft
-    maxAltitude: metersToFeet(HARDCODED_GEOFENCE.maxAltMeters),
+    center: { lat: 0, lng: 0 },
+    radiusFt: 0,
+    maxAltitude: 0,
 };
 
 export default function Map() {
@@ -228,6 +228,18 @@ export default function Map() {
         setLastUpdated(new Date());
         setNoData(false);
         prevPos.current = newPos;
+
+        // If geofence is at default (0,0,0,0), initialize it to balloon position with 0 radius/altitude
+        setGeofence(prev => {
+            if (prev.center.lat === 0 && prev.center.lng === 0 && prev.radiusFt === 0 && prev.maxAltitude === 0) {
+                return {
+                    center: { lat: p.latitude, lng: p.longitude },
+                    radiusFt: 0,
+                    maxAltitude: 0,
+                };
+            }
+            return prev;
+        });
     }, []);
 
     const syncCurrentFlightTrail = useCallback(async () => {
@@ -381,23 +393,29 @@ export default function Map() {
                 <div className="card">
                     <div className="card-title">Geofence Status</div>
                     <div style={{ marginTop: 'var(--space-2)', display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <span className="font-mono text-sm">Radius: {feetToMeters(geofence.radiusFt).toLocaleString(undefined, { maximumFractionDigits: 0 })} m</span>
-                        <span className="font-mono text-sm">Max Alt: {feetToMeters(geofence.maxAltitude).toLocaleString(undefined, { maximumFractionDigits: 0 })} m</span>
-                        {noData ? (
-                            <span className="text-xs" style={{ color: 'var(--color-text-muted)', marginTop: 4 }}>⏳ Waiting for GPS…</span>
+                        {geofence.radiusFt === 0 && geofence.center.lat === 0 && geofence.center.lng === 0 ? (
+                            <span className="text-secondary text-sm">Not configured · set in Flight Logs before starting</span>
                         ) : (
                             <>
-                                <span className="font-mono text-xs text-muted" style={{ marginTop: 4 }}>
-                                    Distance: {feetToMeters(distanceFromCenter!).toLocaleString(undefined, { maximumFractionDigits: 0 })} m
-                                </span>
-                                <div style={{ display: 'flex', gap: 'var(--space-3)', marginTop: 6 }}>
-                                    <span className="text-xs" style={{ color: isWithinGeofence ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                                        {isWithinGeofence ? '✓ Radius OK' : '✗ Outside bound'}
-                                    </span>
-                                    <span className="text-xs" style={{ color: isWithinAltitude ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                                        {isWithinAltitude ? '✓ Alt OK' : '✗ Too high'}
-                                    </span>
-                                </div>
+                                <span className="font-mono text-sm">Radius: {feetToMeters(geofence.radiusFt).toLocaleString(undefined, { maximumFractionDigits: 0 })} m</span>
+                                <span className="font-mono text-sm">Max Alt: {feetToMeters(geofence.maxAltitude).toLocaleString(undefined, { maximumFractionDigits: 0 })} m</span>
+                                {noData ? (
+                                    <span className="text-xs" style={{ color: 'var(--color-text-muted)', marginTop: 4 }}>⏳ Waiting for GPS…</span>
+                                ) : (
+                                    <>
+                                        <span className="font-mono text-xs text-muted" style={{ marginTop: 4 }}>
+                                            Distance: {feetToMeters(distanceFromCenter!).toLocaleString(undefined, { maximumFractionDigits: 0 })} m
+                                        </span>
+                                        <div style={{ display: 'flex', gap: 'var(--space-3)', marginTop: 6 }}>
+                                            <span className="text-xs" style={{ color: isWithinGeofence ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                                {isWithinGeofence ? '✓ Radius OK' : '✗ Outside bound'}
+                                            </span>
+                                            <span className="text-xs" style={{ color: isWithinAltitude ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                                {isWithinAltitude ? '✓ Alt OK' : '✗ Too high'}
+                                            </span>
+                                        </div>
+                                    </>
+                                )}
                             </>
                         )}
                     </div>

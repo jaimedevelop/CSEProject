@@ -16,10 +16,10 @@ interface GeofenceModalProps {
 }
 
 export function GeofenceModal({ isOpen, onConfirm, onCancel, isLoading = false }: GeofenceModalProps) {
-    const [latitude, setLatitude] = useState('27.9947');
-    const [longitude, setLongitude] = useState('-82.5943');
-    const [radius, setRadius] = useState('5000');           // 5 km in meters
-    const [maxAltitude, setMaxAltitude] = useState('30000'); // 30 km in meters
+    const [latitude, setLatitude] = useState('0');
+    const [longitude, setLongitude] = useState('0');
+    const [radius, setRadius] = useState('0');           // 5 km in meters
+    const [maxAltitude, setMaxAltitude] = useState('0'); // 30 km in meters
     const [error, setError] = useState('');
     const [loadingLocation, setLoadingLocation] = useState(false);
 
