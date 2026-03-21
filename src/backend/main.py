@@ -82,6 +82,15 @@ async def receive_telemetry(packet: TelemetryPacket):
     return {"status": "ok", "received_at": latest_telemetry["timestamp"]}
 
 
+# Post /deflate for manual deflation command
+@app.post("/deflate")
+def deflate():
+    print("Received deflation command:")
+    return {
+        "status": "ok",
+        "message": "Deflation initiated"
+    }
+
 # -------------------------------------------------------------------
 # GET /telemetry/latest  — dashboard polls this every 30 s
 # -------------------------------------------------------------------
