@@ -537,6 +537,37 @@ export default function FlightLogs() {
             </div>
 
             <aside className="card" style={{ height: 'fit-content', position: 'sticky', top: 'var(--space-4)' }}>
+                {activeFlight && (
+                    <>
+                        <div className="card-title" style={{ marginBottom: 'var(--space-3)' }}>Current Flight</div>
+                        <button
+                            className={`btn ${selectedFlightId === activeFlight.id ? 'btn-primary' : 'btn-ghost'}`}
+                            style={{
+                                justifyContent: 'flex-start',
+                                textAlign: 'left',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'flex-start',
+                                gap: 2,
+                                width: '100%',
+                                marginBottom: 'var(--space-4)',
+                            }}
+                            onClick={() => setSelectedFlightId(activeFlight.id)}
+                        >
+                            <span style={{ fontWeight: 600 }}>{activeFlight.name}</span>
+                            <span className="text-xs" style={{ opacity: 0.85 }}>
+                                {fmtDateTime(activeFlight.started_at)}
+                            </span>
+                            <span className="text-xs" style={{ opacity: 0.85 }}>
+                                {activeFlight.packet_count} packets · {fmtDuration(activeFlight.started_at)}
+                            </span>
+                            <span className="text-xs" style={{ color: 'var(--color-success)', fontWeight: 600 }}>
+                                LIVE
+                            </span>
+                        </button>
+                    </>
+                )}
+
                 <div className="card-title" style={{ marginBottom: 'var(--space-3)' }}>Previous Flights</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', maxHeight: 600, overflowY: 'auto' }}>
                     {previousFlights.length === 0 ? (
