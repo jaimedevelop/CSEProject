@@ -12,19 +12,23 @@ import {
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
-const POLL_INTERVAL = 1_000; // ms — set to match packet cadence
+const POLL_INTERVAL = 5_00; // ms — set to match packet cadence
 
 /** Hardcoded geofence — will be made configurable from the webapp later */
 const HARDCODED_GEOFENCE = {
-    centerLat: 279640200 / 10_000_000,   // 27.964020°
-    centerLng: -822334100 / 10_000_000,  // -82.233410°
-    radiusMeters: 50_000,                // 50 km radius
-    maxAltMeters: 100,                   // 100 m ceiling
+    centerLat: 0,   // 27.964020°
+    centerLng: 0,  // -82.233410°
+    radiusMeters: 0,                // 50 km radius
+    maxAltMeters: 0,                   // 100 m ceiling
 };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface LatLng { lat: number; lng: number; }
+
+interface TrailPoint extends LatLng {
+    det: boolean;
+}
 
 interface GeofenceConfig {
     center: LatLng;
@@ -68,7 +72,7 @@ interface LiveTileMapProps {
     position: LatLng;
     altitudeFt: number;
     heading: number;
-    trail: LatLng[];
+    trail: TrailPoint[];
     geofence: GeofenceConfig;
     cone: PredictionCone;
     showTrail: boolean;
@@ -79,6 +83,10 @@ interface LiveTileMapProps {
 
 function LiveTileMap({ position, altitudeFt, heading, trail, geofence, cone, showTrail, showCone, showGeofence, noData }: LiveTileMapProps) {
     const headingPoint = projectHeadingPoint(position, heading, 20);
+    const firstDetIndex = trail.findIndex(p => p.det);
+    const preDetTrail = firstDetIndex > 0 ? trail.slice(0, firstDetIndex + 1) : trail;
+    const postDetTrail = firstDetIndex >= 0 ? trail.slice(firstDetIndex) : [];
+    const firstDetPoint = firstDetIndex >= 0 ? trail[firstDetIndex] : null;
 
     return (
         <div style={{
@@ -127,11 +135,28 @@ function LiveTileMap({ position, altitudeFt, heading, trail, geofence, cone, sho
                     </Circle>
                 )}
 
-                {showTrail && trail.length > 1 && (
+                {showTrail && preDetTrail.length > 1 && (
                     <Polyline
-                        positions={trail.map(p => [p.lat, p.lng] as [number, number])}
+                        positions={preDetTrail.map(p => [p.lat, p.lng] as [number, number])}
                         pathOptions={{ color: '#22c55e', weight: 3, opacity: 0.85 }}
                     />
+                )}
+
+                {showTrail && postDetTrail.length > 1 && (
+                    <Polyline
+                        positions={postDetTrail.map(p => [p.lat, p.lng] as [number, number])}
+                        pathOptions={{ color: '#ef4444', weight: 3, opacity: 0.9 }}
+                    />
+                )}
+
+                {showTrail && firstDetPoint && (
+                    <CircleMarker
+                        center={[firstDetPoint.lat, firstDetPoint.lng]}
+                        radius={7}
+                        pathOptions={{ color: '#ffffff', weight: 2, fillColor: '#ef4444', fillOpacity: 1 }}
+                    >
+                        <Tooltip sticky>First detonation event</Tooltip>
+                    </CircleMarker>
                 )}
 
                 {!noData && (
@@ -177,7 +202,7 @@ export default function Map() {
     const [position, setPosition] = useState<LatLng>(DEFAULT_CENTER);
     const [altitudeFt, setAltitudeFt] = useState(0);
     const [heading, setHeading] = useState(0);
-    const [trail, setTrail] = useState<LatLng[]>([]);
+    const [trail, setTrail] = useState<TrailPoint[]>([]);
     
     // Load geofence from localStorage if available, otherwise use default
     const [geofence, setGeofence] = useState<GeofenceConfig>(() => {
@@ -247,12 +272,28 @@ export default function Map() {
         if (!active) {
             setActiveFlightName(null);
             setTrail([]);
+            setGeofence(prev => {
+                const center = prevPos.current ?? { lat: 0, lng: 0 };
+                if (
+                    prev.center.lat === center.lat &&
+                    prev.center.lng === center.lng &&
+                    prev.radiusFt === 0 &&
+                    prev.maxAltitude === 0
+                ) {
+                    return prev;
+                }
+                return {
+                    center,
+                    radiusFt: 0,
+                    maxAltitude: 0,
+                };
+            });
             return;
         }
 
         setActiveFlightName(active.name);
         const { packets } = await fetchFlightPackets(active.id);
-        const fullTrail = packets.map(p => ({ lat: p.latitude, lng: p.longitude }));
+        const fullTrail = packets.map(p => ({ lat: p.latitude, lng: p.longitude, det: Boolean(p.det) }));
         setTrail(fullTrail);
 
         const latest = packets[packets.length - 1];
