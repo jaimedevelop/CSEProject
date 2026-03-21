@@ -219,6 +219,31 @@ def serialize_flight(flight: FlightDB, packet_count: int) -> dict:
     }
 
 
+def relay_geofence_command(latitude: float, longitude: float, radius: float, max_altitude: float) -> dict:
+    geofence_control_url = LISTENER_CONTROL_URL.replace("/control/pop", "/control/geofence")
+    listener_resp = requests.post(
+        geofence_control_url,
+        json={
+            "latitude": latitude,
+            "longitude": longitude,
+            "radius": radius,
+            "max_altitude": max_altitude,
+        },
+        timeout=3,
+    )
+
+    try:
+        listener_payload = listener_resp.json()
+    except ValueError:
+        listener_payload = {"raw": listener_resp.text}
+
+    if listener_resp.status_code >= 400:
+        detail = listener_payload.get("error") or listener_payload.get("message") or "Listener rejected GEOFENCE command"
+        raise HTTPException(status_code=listener_resp.status_code, detail=detail)
+
+    return listener_payload
+
+
 # -------------------------------------------------------------------
 # POST /telemetry  — listener.py calls this whenever a packet arrives
 # -------------------------------------------------------------------
@@ -335,16 +360,57 @@ async def start_flight():
 
 @app.post("/flights/end")
 async def end_flight():
+    global latest_telemetry
     db = SessionLocal()
     try:
         active = get_active_flight(db)
         if active is None:
             return {"status": "ok", "flight": None, "message": "No active flight"}
 
+        last_packet = db.query(TelemetryPacketDB).filter(
+            TelemetryPacketDB.flight_id == active.id
+        ).order_by(TelemetryPacketDB.id.desc()).first()
+
         active.ended_at = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
         db.commit()
         count = db.query(TelemetryPacketDB).filter(TelemetryPacketDB.flight_id == active.id).count()
-        return {"status": "ok", "flight": serialize_flight(active, count)}
+
+        geofence_sent = False
+        geofence_error: Optional[str] = None
+
+        lat = None
+        lon = None
+        alt_m = None
+
+        if last_packet is not None:
+            lat = last_packet.latitude
+            lon = last_packet.longitude
+            alt_m = last_packet.altitude_m
+        elif latest_telemetry is not None:
+            lat = latest_telemetry.get("latitude")
+            lon = latest_telemetry.get("longitude")
+            alt_m = latest_telemetry.get("altitude_m")
+
+        if lat is not None and lon is not None and alt_m is not None:
+            try:
+                relay_geofence_command(
+                    latitude=float(lat),
+                    longitude=float(lon),
+                    radius=0.0,
+                    max_altitude=float(alt_m),
+                )
+                geofence_sent = True
+            except Exception as e:
+                geofence_error = str(e)
+        else:
+            geofence_error = "No last known position/altitude available to send geofence"
+
+        return {
+            "status": "ok",
+            "flight": serialize_flight(active, count),
+            "end_geofence_sent": geofence_sent,
+            "end_geofence_error": geofence_error,
+        }
     finally:
         db.close()
 
@@ -423,28 +489,14 @@ def deflate():
 @app.post("/geofence")
 def set_geofence(cmd: GeofenceCommand):
     try:
-        geofence_control_url = LISTENER_CONTROL_URL.replace("/control/pop", "/control/geofence")
-        listener_resp = requests.post(
-            geofence_control_url,
-            json={
-                "latitude": cmd.latitude,
-                "longitude": cmd.longitude,
-                "radius": cmd.radius,
-                "max_altitude": cmd.max_altitude,
-            },
-            timeout=3,
+        listener_payload = relay_geofence_command(
+            latitude=cmd.latitude,
+            longitude=cmd.longitude,
+            radius=cmd.radius,
+            max_altitude=cmd.max_altitude,
         )
     except requests.RequestException as e:
         raise HTTPException(status_code=503, detail=f"Listener control unavailable: {e}") from e
-
-    try:
-        listener_payload = listener_resp.json()
-    except ValueError:
-        listener_payload = {"raw": listener_resp.text}
-
-    if listener_resp.status_code >= 400:
-        detail = listener_payload.get("error") or listener_payload.get("message") or "Listener rejected GEOFENCE command"
-        raise HTTPException(status_code=listener_resp.status_code, detail=detail)
 
     return {
         "status": "ok",

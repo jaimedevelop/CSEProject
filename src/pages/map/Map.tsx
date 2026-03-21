@@ -149,7 +149,7 @@ function LiveTileMap({ position, altitudeFt, heading, trail, geofence, cone, sho
                             pathOptions={{ color: '#ffffff', weight: 2, fillColor: '#2563eb', fillOpacity: 1 }}
                         >
                             <Tooltip direction="top" offset={[0, -8]}>
-                                Balloon · {altitudeFt.toFixed(1)} ft
+                                Balloon · {feetToMeters(altitudeFt).toFixed(1)} m
                             </Tooltip>
                         </CircleMarker>
                     </>
@@ -374,7 +374,7 @@ export default function Map() {
                     <div style={{ marginTop: 'var(--space-2)', display: 'flex', flexDirection: 'column', gap: 4 }}>
                         <span className="font-mono text-sm">{noData ? '--' : `${position.lat.toFixed(6)}° N`}</span>
                         <span className="font-mono text-sm">{noData ? '--' : `${Math.abs(position.lng).toFixed(6)}° W`}</span>
-                        <span className="font-mono text-sm">{noData ? '--' : `${altitudeFt.toFixed(1)} ft AGL`}</span>
+                        <span className="font-mono text-sm">{noData ? '--' : `${feetToMeters(altitudeFt).toFixed(1)} m AGL`}</span>
                     </div>
                 </div>
 
@@ -408,7 +408,7 @@ export default function Map() {
                     <div style={{ marginTop: 'var(--space-2)', display: 'flex', flexDirection: 'column', gap: 4 }}>
                         {cone.active ? (
                             <>
-                                <span className="font-mono text-sm">Radius: ±{cone.radiusFt.toFixed(0)} ft</span>
+                                <span className="font-mono text-sm">Radius: ±{feetToMeters(cone.radiusFt).toFixed(0)} m</span>
                                 <span className="font-mono text-sm">{cone.center.lat.toFixed(5)}° N</span>
                                 <span className="text-xs" style={{ color: 'var(--color-info)', marginTop: 4 }}>95% confidence</span>
                             </>

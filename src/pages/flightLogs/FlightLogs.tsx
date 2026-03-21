@@ -6,7 +6,6 @@ import {
     fetchFlightPackets,
     fetchFlights,
     fetchFlightStatus,
-    metersToFeet,
     startFlight,
     sendGeofence,
     tiltAngle,
@@ -43,7 +42,7 @@ function fmtDuration(startIso: string, endIso?: string | null) {
 
 function exportCSV(packets: TelemetryPacket[], flightLabel: string) {
     const headers = [
-        'timestamp', 'latitude', 'longitude', 'altitude_m', 'altitude_ft',
+        'timestamp', 'latitude', 'longitude', 'altitude_m',
         'temperature_c', 'pressure_hpa',
         'accel_x', 'accel_y', 'accel_z', 'tilt_deg', 'stability_index',
         'rssi', 'snr', 'satellites_in_view', 'wind_gust_mph', 'calculated_wind_gust_mph',
@@ -54,7 +53,6 @@ function exportCSV(packets: TelemetryPacket[], flightLabel: string) {
         p.latitude.toFixed(6),
         p.longitude.toFixed(6),
         p.altitude_m.toFixed(2),
-        metersToFeet(p.altitude_m).toFixed(2),
         p.temperature_c.toFixed(2),
         p.pressure_hpa.toFixed(2),
         p.accel_x.toFixed(3),
@@ -267,7 +265,7 @@ export default function FlightLogs() {
         return filtered.slice(start, start + PACKETS_PER_PAGE);
     }, [filtered, currentPage]);
 
-    const maxAltFt = packets.length ? Math.max(...packets.map(p => metersToFeet(p.altitude_m))) : null;
+    const maxAltM = packets.length ? Math.max(...packets.map(p => p.altitude_m)) : null;
     const minRSSI = packets.length ? Math.min(...packets.map(p => p.rssi ?? 0)) : null;
     const lastPacket = packets[packets.length - 1] ?? null;
 
@@ -335,7 +333,7 @@ export default function FlightLogs() {
                         label="Flight Duration"
                         value={currentFlight ? fmtDuration(currentFlight.started_at, currentFlight.ended_at) : '--'}
                     />
-                    <SummaryCard label="Peak Altitude" value={maxAltFt != null ? maxAltFt.toFixed(0) : '--'} unit="ft" />
+                    <SummaryCard label="Peak Altitude" value={maxAltM != null ? maxAltM.toFixed(0) : '--'} unit="m" />
                     <SummaryCard label="Worst RSSI" value={minRSSI != null ? `${minRSSI}` : '--'} unit="dBm" />
                     <SummaryCard
                         label="Last Position"
@@ -387,7 +385,7 @@ export default function FlightLogs() {
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)' }}>
                             <thead>
                                 <tr style={{ background: 'var(--color-bg-panel)', borderBottom: '1px solid var(--color-border)' }}>
-                                    {['Time', 'Alt (ft)', 'Temp (°C)', 'Pressure', 'Tilt (°)', 'Stability', 'RSSI', 'SNR', 'SIV', 'Calc Gust', 'Lat', 'Lng'].map(h => (
+                                    {['Time', 'Alt (m)', 'Temp (°C)', 'Pressure', 'Tilt (°)', 'Stability', 'RSSI', 'SNR', 'SIV', 'Calc Gust', 'Lat', 'Lng'].map(h => (
                                         <th key={h} style={{
                                             padding: 'var(--space-2) var(--space-3)',
                                             textAlign: 'left',
@@ -410,7 +408,7 @@ export default function FlightLogs() {
                                 ) : paginatedPackets.map(p => {
                                     const key = p.timestamp;
                                     const isExpanded = expanded === key;
-                                    const altFt = metersToFeet(p.altitude_m);
+                                    const altM = p.altitude_m;
                                     const tilt = tiltAngle(p.accel_x, p.accel_y, p.accel_z);
                                     const rssiWarn = p.rssi != null && p.rssi < -95;
                                     const tiltWarn = tilt > 20;
@@ -433,8 +431,8 @@ export default function FlightLogs() {
                                                     {fmtTime(p.timestamp)}
                                                     {p.det && <span style={{ marginLeft: 'var(--space-1)' }}>🚨</span>}
                                                 </td>
-                                                <td style={{ padding: 'var(--space-2) var(--space-3)', color: altFt > 19000 ? 'var(--color-warning)' : 'var(--color-text-primary)' }}>
-                                                    {altFt.toFixed(1)}
+                                                <td style={{ padding: 'var(--space-2) var(--space-3)', color: altM > 5800 ? 'var(--color-warning)' : 'var(--color-text-primary)' }}>
+                                                    {altM.toFixed(1)}
                                                 </td>
                                                 <td style={{ padding: 'var(--space-2) var(--space-3)' }}>{p.temperature_c.toFixed(1)}</td>
                                                 <td style={{ padding: 'var(--space-2) var(--space-3)' }}>{p.pressure_hpa.toFixed(1)}</td>
@@ -468,7 +466,7 @@ export default function FlightLogs() {
                                                                 { k: 'Timestamp', v: p.timestamp },
                                                                 { k: 'Latitude', v: `${p.latitude.toFixed(6)}°` },
                                                                 { k: 'Longitude', v: `${p.longitude.toFixed(6)}°` },
-                                                                { k: 'Altitude', v: `${altFt.toFixed(2)} ft (${p.altitude_m.toFixed(2)} m)` },
+                                                                { k: 'Altitude', v: `${p.altitude_m.toFixed(2)} m` },
                                                                 { k: 'Temperature', v: `${p.temperature_c.toFixed(2)} °C` },
                                                                 { k: 'Pressure', v: `${p.pressure_hpa.toFixed(2)} hPa` },
                                                                 { k: 'Accel X', v: `${p.accel_x.toFixed(3)} m/s²` },

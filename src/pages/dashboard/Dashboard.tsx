@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react';
 import '../../styles/theme.css';
 import {
     fetchLatestTelemetry,
-    metersToFeet,
     triggerManualDeflation,
     tiltAngle,
     type FetchState,
@@ -10,6 +9,7 @@ import {
 } from '../../services/telemetry';
 
 const POLL_INTERVAL = 1; // seconds — set to match packet cadence
+const ALT_WARN_M = 5800; // ~19,000 ft
 
 // ─── Display helpers ──────────────────────────────────────────────────────────
 
@@ -36,7 +36,7 @@ function snrLevel(v: number | null): Level {
 
 function altLevel(v: number | null): Level {
     if (v == null) return 'unknown';
-    return v > 19000 ? 'warning' : 'nominal'; // ft
+    return v > ALT_WARN_M ? 'warning' : 'nominal'; // m
 }
 
 function tiltLevel(deg: number | null): Level {
@@ -55,12 +55,12 @@ function batteryLevel(v: number | null): Level {
 
 function overallStatus(d: TelemetryPacket | null): 'nominal' | 'warning' | 'critical' | 'unknown' {
     if (!d) return 'unknown';
-    const altFt = metersToFeet(d.altitude_m);
+    const altM = d.altitude_m;
     const tilt = tiltAngle(d.accel_x, d.accel_y, d.accel_z);
     if (d.rssi != null && d.rssi < -110) return 'critical';
     if (d.battery_pct != null && d.battery_pct < 10) return 'critical';
     if (
-        altFt > 19000 ||
+        altM > ALT_WARN_M ||
         tilt > 45 ||
         (d.battery_pct != null && d.battery_pct < 25) ||
         (d.rssi != null && d.rssi < -95) ||
@@ -75,7 +75,7 @@ interface Alert { id: string; level: 'warning' | 'danger' | 'info'; message: str
 
 function deriveAlerts(d: TelemetryPacket): Alert[] {
     const alerts: Alert[] = [];
-    const altFt = metersToFeet(d.altitude_m);
+    const altM = d.altitude_m;
     const tilt = tiltAngle(d.accel_x, d.accel_y, d.accel_z);
 
     if (d.rssi != null && d.rssi < -110)
@@ -86,8 +86,8 @@ function deriveAlerts(d: TelemetryPacket): Alert[] {
     if (d.snr != null && d.snr < 0)
         alerts.push({ id: 'snr-warn', level: 'warning', message: `Negative SNR: ${d.snr} dB — packet loss likely.` });
 
-    if (altFt > 19000)
-        alerts.push({ id: 'alt-warn', level: 'warning', message: `High altitude: ${altFt.toFixed(0)} ft` });
+    if (altM > ALT_WARN_M)
+        alerts.push({ id: 'alt-warn', level: 'warning', message: `High altitude: ${altM.toFixed(0)} m` });
 
     if (tilt > 45)
         alerts.push({ id: 'tilt-crit', level: 'danger', message: `Extreme tilt: ${tilt.toFixed(1)}° — payload may be tumbling.` });
@@ -246,7 +246,7 @@ export default function Dashboard() {
     }, [poll]);
 
     const status = overallStatus(data);
-    const altFt = data ? metersToFeet(data.altitude_m) : null;
+    const altM = data ? data.altitude_m : null;
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', maxWidth: 1200 }}>
@@ -279,7 +279,7 @@ export default function Dashboard() {
 
             {/* ── Primary Telemetry Grid ── */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 'var(--space-4)' }}>
-                <TelemetryCard label="Altitude" value={fmt(altFt, 1)} unit="ft" level={altLevel(altFt)} />
+                <TelemetryCard label="Altitude" value={fmt(altM, 1)} unit="m" level={altLevel(altM)} />
                 <TelemetryCard label="Battery" value={fmt(data?.battery_pct ?? null, 1)} unit="%" level={batteryLevel(data?.battery_pct ?? null)} />
                 <TelemetryCard label="Signal (RSSI)" value={fmt(data?.rssi, 0)} unit="dBm" level={signalLevel(data?.rssi ?? null)} />
                 <TelemetryCard label="SNR" value={fmt(data?.snr, 1)} unit="dB" level={snrLevel(data?.snr ?? null)} />
@@ -308,7 +308,7 @@ export default function Dashboard() {
                         {[
                             { label: 'Latitude', val: data ? `${data.latitude.toFixed(6)}°` : '--' },
                             { label: 'Longitude', val: data ? `${data.longitude.toFixed(6)}°` : '--' },
-                            { label: 'Altitude', val: altFt != null ? `${altFt.toFixed(1)} ft` : '--' },
+                            { label: 'Altitude', val: altM != null ? `${altM.toFixed(1)} m` : '--' },
                         ].map(r => (
                             <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <span className="text-secondary text-sm">{r.label}</span>
