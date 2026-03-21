@@ -93,7 +93,7 @@ function LiveTileMap({ position, altitudeFt, heading, trail, geofence, cone, sho
                 center={[position.lat, position.lng]}
                 zoom={12}
                 minZoom={4}
-                maxZoom={18}
+                maxZoom={22}
                 scrollWheelZoom
                 style={{ height: '100%', width: '100%' }}
             >
@@ -101,6 +101,8 @@ function LiveTileMap({ position, altitudeFt, heading, trail, geofence, cone, sho
                 <TileLayer
                     url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
                     attribution="Tiles &copy; Esri"
+                    maxNativeZoom={19}
+                    maxZoom={22}
                 />
 
                 {!noData && <RecenterOnPosition position={position} noData={noData} />}

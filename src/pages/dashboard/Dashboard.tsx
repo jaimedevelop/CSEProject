@@ -73,31 +73,10 @@ function overallStatus(d: TelemetryPacket | null): 'nominal' | 'warning' | 'crit
 
 interface Alert { id: string; level: 'warning' | 'danger' | 'info'; message: string; }
 
-function detReasonLabel(packet: TelemetryPacket): string {
-    if (packet.det_reason_text) return packet.det_reason_text;
-    const reasons: Record<number, string> = {
-        0: 'NONE',
-        1: 'MANUAL_POP',
-        2: 'LOW_BATTERY',
-        3: 'GEOFENCE_EXIT',
-        4: 'ALTITUDE_DROP',
-    };
-    if (packet.det_reason == null) return 'UNKNOWN';
-    return reasons[packet.det_reason] ?? `UNKNOWN_${packet.det_reason}`;
-}
-
 function deriveAlerts(d: TelemetryPacket): Alert[] {
     const alerts: Alert[] = [];
     const altFt = metersToFeet(d.altitude_m);
     const tilt = tiltAngle(d.accel_x, d.accel_y, d.accel_z);
-
-    if (d.det) {
-        alerts.push({
-            id: 'det-fired',
-            level: 'danger',
-            message: `Detonation reported: ${detReasonLabel(d)}`,
-        });
-    }
 
     if (d.rssi != null && d.rssi < -110)
         alerts.push({ id: 'sig-crit', level: 'danger', message: `Signal critical: ${d.rssi} dBm — approaching loss-of-comms threshold.` });
@@ -107,13 +86,6 @@ function deriveAlerts(d: TelemetryPacket): Alert[] {
     if (d.snr != null && d.snr < 0)
         alerts.push({ id: 'snr-warn', level: 'warning', message: `Negative SNR: ${d.snr} dB — packet loss likely.` });
 
-    if (d.pressure_drop_warning)
-        alerts.push({
-            id: 'pres-drop-warn',
-            level: 'warning',
-            message: `Pressure drop warning: ${fmt(d.pressure_drop_3h_mb ?? null, 1)} mb over 3h and current pressure ${d.pressure_hpa.toFixed(1)} mb (<1009 mb).`,
-        });
-
     if (altFt > 19000)
         alerts.push({ id: 'alt-warn', level: 'warning', message: `High altitude: ${altFt.toFixed(0)} ft` });
 
@@ -121,9 +93,6 @@ function deriveAlerts(d: TelemetryPacket): Alert[] {
         alerts.push({ id: 'tilt-crit', level: 'danger', message: `Extreme tilt: ${tilt.toFixed(1)}° — payload may be tumbling.` });
     else if (tilt > 20)
         alerts.push({ id: 'tilt-warn', level: 'warning', message: `Elevated tilt: ${tilt.toFixed(1)}°` });
-
-    if (d.calculated_wind_gust_mph != null && d.calculated_wind_gust_mph > 40)
-        alerts.push({ id: 'wind-warn', level: 'danger', message: `Calculated wind gust exceeds 40 mph (${d.calculated_wind_gust_mph.toFixed(1)} mph).` });
 
     return alerts;
 }
