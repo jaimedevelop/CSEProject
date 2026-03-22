@@ -24,6 +24,10 @@ app.add_middleware(
 
 LISTENER_CONTROL_URL = os.environ.get("LISTENER_CONTROL_URL", "http://127.0.0.1:8765/control/pop")
 
+
+def listener_control_endpoint(path_suffix: str) -> str:
+    return LISTENER_CONTROL_URL.replace("/control/pop", path_suffix)
+
 # ─── Database Setup ──────────────────────────────────────────────────────────
 DB_PATH = os.path.join(os.path.dirname(__file__), "telemetry.db")
 engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
@@ -253,7 +257,7 @@ def serialize_flight(flight: FlightDB, packet_count: int) -> dict:
 
 
 def relay_geofence_command(latitude: float, longitude: float, radius: float, max_altitude: float) -> dict:
-    geofence_control_url = LISTENER_CONTROL_URL.replace("/control/pop", "/control/geofence")
+    geofence_control_url = listener_control_endpoint("/control/geofence")
     listener_resp = requests.post(
         geofence_control_url,
         json={
@@ -507,7 +511,7 @@ async def get_flight_packets(flight_id: str):
 @app.post("/deflate")
 def deflate():
     try:
-        listener_resp = requests.post(LISTENER_CONTROL_URL, timeout=3)
+        listener_resp = requests.post(listener_control_endpoint("/control/pop"), timeout=3)
     except requests.RequestException as e:
         raise HTTPException(status_code=503, detail=f"Listener control unavailable: {e}") from e
 
@@ -523,6 +527,29 @@ def deflate():
     return {
         "status": "ok",
         "message": "Deflation command relayed",
+        "listener": listener_payload,
+    }
+
+
+@app.post("/reset")
+def reset_firmware():
+    try:
+        listener_resp = requests.post(listener_control_endpoint("/control/reset"), timeout=3)
+    except requests.RequestException as e:
+        raise HTTPException(status_code=503, detail=f"Listener control unavailable: {e}") from e
+
+    try:
+        listener_payload = listener_resp.json()
+    except ValueError:
+        listener_payload = {"raw": listener_resp.text}
+
+    if listener_resp.status_code >= 400:
+        detail = listener_payload.get("error") or listener_payload.get("message") or "Listener rejected RESET command"
+        raise HTTPException(status_code=listener_resp.status_code, detail=detail)
+
+    return {
+        "status": "ok",
+        "message": "Reset command relayed",
         "listener": listener_payload,
     }
 

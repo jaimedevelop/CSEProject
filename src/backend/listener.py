@@ -189,6 +189,25 @@ def send_pop_command() -> tuple[bool, str]:
             return False, f"Failed to write POP command: {e}"
 
 
+def send_reset_command() -> tuple[bool, str]:
+    """Send RESET over the active serial link, if available."""
+    if SIM_MODE:
+        print("[listener] SIM_MODE=ON — accepted RESET command (simulated)")
+        return True, "RESET accepted in simulator mode"
+
+    with serial_lock:
+        if active_serial is None or not active_serial.is_open:
+            return False, "Serial link is not connected"
+
+        try:
+            active_serial.write(b"RESET\n")
+            active_serial.flush()
+            print("[listener] RESET command sent over serial")
+            return True, "RESET command sent"
+        except serial.SerialException as e:
+            return False, f"Failed to write RESET command: {e}"
+
+
 def send_geofence_command(latitude: float, longitude: float, radius: float, max_altitude: float) -> tuple[bool, str]:
     """Send GEOFENCE over the active serial link.
     
@@ -240,6 +259,12 @@ class ControlRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(200, {"status": "ok", "message": message})
             else:
                 self._send_json(409, {"status": "error", "error": message})
+        elif self.path == "/control/reset":
+            ok, message = send_reset_command()
+            if ok:
+                self._send_json(200, {"status": "ok", "message": message})
+            else:
+                self._send_json(409, {"status": "error", "error": message})
         elif self.path == "/control/geofence":
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length)
@@ -268,7 +293,7 @@ def start_control_server():
     server = ThreadingHTTPServer((CONTROL_HOST, CONTROL_PORT), ControlRequestHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    print(f"[listener] Control API listening on http://{CONTROL_HOST}:{CONTROL_PORT}/control/pop and /control/geofence")
+    print(f"[listener] Control API listening on http://{CONTROL_HOST}:{CONTROL_PORT}/control/pop, /control/reset, and /control/geofence")
 
 
 def post_packet(packet: dict):
