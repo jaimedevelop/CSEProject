@@ -132,6 +132,28 @@ export async function triggerManualDeflation(): Promise<DeflateResult> {
     }
 }
 
+export async function triggerFirmwareReset(): Promise<DeflateResult> {
+    try {
+        const res = await fetch(`${API_BASE}/reset`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+        });
+
+        const data: unknown = await res.json().catch(() => ({}));
+        const msgFromBody = data && typeof data === 'object'
+            ? (data as { detail?: string; message?: string }).detail ?? (data as { detail?: string; message?: string }).message
+            : undefined;
+
+        if (!res.ok) {
+            return { ok: false, message: msgFromBody ?? `Request failed (${res.status})` };
+        }
+
+        return { ok: true, message: msgFromBody ?? 'Reset command sent' };
+    } catch {
+        return { ok: false, message: 'Unable to reach backend' };
+    }
+}
+
 export type GeofenceResult =
     | { ok: true; message: string }
     | { ok: false; message: string };

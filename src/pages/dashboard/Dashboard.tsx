@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import '../../styles/theme.css';
 import {
     fetchLatestTelemetry,
+    triggerFirmwareReset,
     triggerManualDeflation,
     tiltAngle,
     type FetchState,
@@ -183,6 +184,59 @@ function DeflationButton() {
     );
 }
 
+function ResetButton() {
+    const [phase, setPhase] = useState<'idle' | 'sending' | 'confirmed' | 'error'>('idle');
+    const [statusMsg, setStatusMsg] = useState<string>('');
+
+    const handleClick = async () => {
+        if (phase === 'sending') return;
+        setPhase('sending');
+        const result = await triggerFirmwareReset();
+        if (result.ok) {
+            setStatusMsg(result.message);
+            setPhase('confirmed');
+        } else {
+            setStatusMsg(result.message);
+            setPhase('error');
+        }
+        setTimeout(() => {
+            setStatusMsg('');
+            setPhase('idle');
+        }, 5000);
+    };
+
+    const labels = {
+        idle: 'Reset Firmware',
+        sending: 'Sending Reset…',
+        confirmed: 'Reset Sent',
+        error: 'Reset Failed',
+    };
+
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+            <button
+                className="btn btn-secondary"
+                onClick={handleClick}
+                disabled={phase === 'sending'}
+                style={{ width: '100%', padding: 'var(--space-3) var(--space-4)', fontSize: 'var(--text-base)' }}
+            >
+                {labels[phase]}
+            </button>
+            {statusMsg && (
+                <p
+                    style={{
+                        fontSize: 'var(--text-xs)',
+                        color: phase === 'error' ? 'var(--color-danger)' : 'var(--color-success)',
+                        textAlign: 'center',
+                    }}
+                >
+                    {statusMsg}
+                </p>
+            )}
+        </div>
+    );
+}
+
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -287,7 +341,10 @@ export default function Dashboard() {
                     Manual deflation overrides all logic and ruptures the balloon envelope. Use only in an emergency.
                     Command acknowledgement is immediate; physical descent response may take a few seconds.
                 </p>
-                <DeflationButton />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+                    <DeflationButton />
+                    <ResetButton />
+                </div>
             </div>
 
         </div>
