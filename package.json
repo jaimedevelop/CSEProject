@@ -7,6 +7,11 @@
     "dev:front": "vite",
     "dev:back": "python -m uvicorn src.backend.main:app --reload",
     "dev:listener": "python src/backend/listener.py",
+    "dev:listener:bat20": "python src/backend/listener.py --bat20",
+    "dev:listener:bat5": "python src/backend/listener.py --bat5",
+    "dev:listener:rssi110": "python src/backend/listener.py --rssi110",
+    "dev:listener:pressuredrop": "python src/backend/listener.py --pressuredrop",
+    "dev:listener:wind40": "python src/backend/listener.py --wind40",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },

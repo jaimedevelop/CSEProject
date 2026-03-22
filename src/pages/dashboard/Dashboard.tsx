@@ -69,37 +69,6 @@ function overallStatus(d: TelemetryPacket | null): 'nominal' | 'warning' | 'crit
     return 'nominal';
 }
 
-// ─── Alerts ───────────────────────────────────────────────────────────────────
-
-interface Alert { id: string; level: 'warning' | 'danger' | 'info'; message: string; }
-
-function deriveAlerts(d: TelemetryPacket): Alert[] {
-    const alerts: Alert[] = [];
-    const altM = d.altitude_m;
-    const tilt = tiltAngle(d.accel_x, d.accel_y, d.accel_z);
-
-    if (d.battery_pct != null && d.battery_pct < 20)
-        alerts.push({ id: 'batt-warn', level: 'danger', message: `Battery low: ${d.battery_pct.toFixed(1)}%` });
-
-    if (d.rssi != null && d.rssi < -110)
-        alerts.push({ id: 'sig-crit', level: 'danger', message: `Signal critical: ${d.rssi} dBm — approaching loss-of-comms threshold.` });
-    else if (d.rssi != null && d.rssi < -95)
-        alerts.push({ id: 'sig-warn', level: 'warning', message: `Weak signal: ${d.rssi} dBm` });
-
-    if (d.snr != null && d.snr < 0)
-        alerts.push({ id: 'snr-warn', level: 'warning', message: `Negative SNR: ${d.snr} dB — packet loss likely.` });
-
-    if (altM > ALT_WARN_M)
-        alerts.push({ id: 'alt-warn', level: 'warning', message: `High altitude: ${altM.toFixed(0)} m` });
-
-    if (tilt > 45)
-        alerts.push({ id: 'tilt-crit', level: 'danger', message: `Extreme tilt: ${tilt.toFixed(1)}° — payload may be tumbling.` });
-    else if (tilt > 20)
-        alerts.push({ id: 'tilt-warn', level: 'warning', message: `Elevated tilt: ${tilt.toFixed(1)}°` });
-
-    return alerts;
-}
-
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function TelemetryCard({ label, value, unit, level = 'nominal', children }: {
@@ -136,16 +105,6 @@ function AccelCard({ ax, ay, az }: { ax: number | null; ay: number | null; az: n
                     </div>
                 ))}
             </div>
-        </div>
-    );
-}
-
-function AlertBanner({ alert }: { alert: Alert }) {
-    const icons: Record<Alert['level'], string> = { warning: '⚠️', danger: '🚨', info: 'ℹ️' };
-    return (
-        <div className={`alert-banner alert-banner-${alert.level === 'danger' ? 'danger' : alert.level === 'warning' ? 'warning' : 'info'}`}>
-            <span>{icons[alert.level]}</span>
-            <span>{alert.message}</span>
         </div>
     );
 }
@@ -229,7 +188,6 @@ function DeflationButton() {
 export default function Dashboard() {
     const [fetchState, setFetchState] = useState<FetchState>({ status: 'loading' });
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-    const [alerts, setAlerts] = useState<Alert[]>([]);
 
     const data = fetchState.status === 'ok' ? fetchState.data : null;
 
@@ -238,7 +196,6 @@ export default function Dashboard() {
         setFetchState(result);
         if (result.status === 'ok') {
             setLastUpdated(new Date());
-            setAlerts(deriveAlerts(result.data));
         }
     }, []);
 
@@ -272,13 +229,6 @@ export default function Dashboard() {
 
             {/* ── Connection / no-data banner ── */}
             <ConnectionBanner state={fetchState.status} />
-
-            {/* ── Alert Banners ── */}
-            {alerts.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-                    {alerts.map(a => <AlertBanner key={a.id} alert={a} />)}
-                </div>
-            )}
 
             {/* ── Primary Telemetry Grid ── */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 'var(--space-4)' }}>

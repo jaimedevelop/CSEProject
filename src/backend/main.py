@@ -141,6 +141,9 @@ class TelemetryPacket(BaseModel):
     det_reason: Optional[int] = None
     det_reason_text: Optional[str] = None
     wind_gust_mph: Optional[float] = None  # simulator compatibility
+    pressure_drop_3h_mb: Optional[float] = None
+    pressure_drop_warning: Optional[bool] = None
+    wind_gust_warning: Optional[bool] = None
 
 
 class GeofenceCommand(BaseModel):
@@ -301,11 +304,14 @@ async def receive_telemetry(packet: TelemetryPacket):
 
         pressure_drop_3h_mb = 0.0
         pressure_drop_warning = False
-        if active_flight is not None:
+        if packet.pressure_drop_3h_mb is not None:
+            pressure_drop_3h_mb = float(packet.pressure_drop_3h_mb)
+            pressure_drop_warning = bool(packet.pressure_drop_warning)
+        elif active_flight is not None:
             pressure_drop_3h_mb = compute_pressure_drop_3h_mb(db, active_flight.id, packet.pressure_hpa)
             pressure_drop_warning = pressure_drop_3h_mb > 4.0 and packet.pressure_hpa < 1009.0
 
-        wind_gust_warning = calculated_wind_gust_mph > 40.0
+        wind_gust_warning = bool(packet.wind_gust_warning) if packet.wind_gust_warning is not None else (calculated_wind_gust_mph > 40.0)
 
         latest_telemetry = packet.model_dump()
         latest_telemetry["calculated_wind_gust_mph"] = calculated_wind_gust_mph

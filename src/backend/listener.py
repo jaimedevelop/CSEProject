@@ -5,6 +5,7 @@
 # Parsed packets are POSTed to the FastAPI server as JSON.
 
 from __future__ import annotations
+import argparse
 import os
 import sys
 import json
@@ -26,7 +27,16 @@ BAUD_RATE   = int(os.environ.get("BAUD_RATE", "115200"))
 API_URL     = os.environ.get("API_URL", "http://127.0.0.1:8000/telemetry")
 CONTROL_HOST = os.environ.get("LISTENER_CONTROL_HOST", "127.0.0.1")
 CONTROL_PORT = int(os.environ.get("LISTENER_CONTROL_PORT", "8765"))
+DEMO_INTERVAL_S = float(os.environ.get("LISTENER_DEMO_INTERVAL", "2.0"))
 # =============================================================================
+
+DEMO_SCENARIO: str | None = None
+
+SCENARIO_BAT20 = "bat20"
+SCENARIO_BAT5 = "bat5"
+SCENARIO_RSSI110 = "rssi110"
+SCENARIO_PRESSURE_DROP = "pressuredrop"
+SCENARIO_WIND40 = "wind40"
 
 DET_REASON_LABELS = {
     0: "NONE",
@@ -38,6 +48,126 @@ DET_REASON_LABELS = {
 
 serial_lock = threading.Lock()
 active_serial: serial.Serial | None = None
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Telemetry listener (serial/simulator) with optional alert-demo scenarios.",
+    )
+
+    parser.add_argument(
+        "--sim",
+        action="store_true",
+        help="Force simulator subprocess mode.",
+    )
+
+    parser.add_argument(
+        "--serial",
+        action="store_true",
+        help="Force serial mode (default when no demo flag is used).",
+    )
+
+    demo_group = parser.add_mutually_exclusive_group()
+    demo_group.add_argument(
+        "--bat20",
+        action="store_true",
+        help="Emit demo telemetry that triggers battery-low alert (<20%%).",
+    )
+    demo_group.add_argument(
+        "--bat5",
+        action="store_true",
+        help="Emit demo telemetry for critical battery/auto-pop (<5%%).",
+    )
+    demo_group.add_argument(
+        "--rssi110",
+        action="store_true",
+        help="Emit demo telemetry that triggers RSSI alert (< -110 dBm).",
+    )
+    demo_group.add_argument(
+        "--pressuredrop",
+        action="store_true",
+        help="Emit demo telemetry for pressure-drop warning (>4 mb/3h and <1009 mb).",
+    )
+    demo_group.add_argument(
+        "--wind40",
+        action="store_true",
+        help="Emit demo telemetry for calculated wind gust alert (>40 mph).",
+    )
+
+    return parser.parse_args()
+
+
+def select_demo_scenario(args: argparse.Namespace) -> str | None:
+    if args.bat20:
+        return SCENARIO_BAT20
+    if args.bat5:
+        return SCENARIO_BAT5
+    if args.rssi110:
+        return SCENARIO_RSSI110
+    if args.pressuredrop:
+        return SCENARIO_PRESSURE_DROP
+    if args.wind40:
+        return SCENARIO_WIND40
+    return None
+
+
+def build_demo_packet(scenario: str) -> dict:
+    # Base values stay realistic enough for dashboard visuals while remaining deterministic.
+    packet = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "latitude": 34.0219,
+        "longitude": -118.4814,
+        "altitude_m": 1240.0,
+        "temperature_c": -4.8,
+        "humidity_pct": 42.0,
+        "pressure_hpa": 1011.4,
+        "accel_x": 0.12,
+        "accel_y": -0.08,
+        "accel_z": 9.79,
+        "rssi": -88,
+        "snr": 6.5,
+        "speed_mps": 8.0,
+        "heading_deg": 274.0,
+        "satellites_in_view": 11,
+        "battery_pct": 64.0,
+        "stability_index": 0.93,
+        "det": False,
+        "det_reason": 0,
+        "det_reason_text": "NONE",
+        "wind_gust_mph": None,
+    }
+
+    if scenario == SCENARIO_BAT20:
+        packet["battery_pct"] = 19.0
+    elif scenario == SCENARIO_BAT5:
+        packet["battery_pct"] = 4.0
+        packet["det"] = True
+        packet["det_reason"] = 2
+        packet["det_reason_text"] = "LOW_BATTERY"
+    elif scenario == SCENARIO_RSSI110:
+        packet["rssi"] = -111
+    elif scenario == SCENARIO_PRESSURE_DROP:
+        packet["pressure_hpa"] = 1008.0
+        packet["pressure_drop_3h_mb"] = 4.6
+        packet["pressure_drop_warning"] = True
+    elif scenario == SCENARIO_WIND40:
+        packet["speed_mps"] = 20.0
+        packet["accel_x"] = 0.0
+        packet["accel_y"] = 0.0
+        packet["accel_z"] = 9.81
+
+    return packet
+
+
+def run_demo_mode(scenario: str):
+    print(f"[listener] DEMO_MODE=ON — scenario '{scenario}' (interval={DEMO_INTERVAL_S:.1f}s)")
+    try:
+        while True:
+            packet = build_demo_packet(scenario)
+            post_packet(packet)
+            time.sleep(DEMO_INTERVAL_S)
+    except KeyboardInterrupt:
+        print("[listener] Demo mode stopped.")
 
 
 def send_pop_command() -> tuple[bool, str]:
@@ -68,7 +198,7 @@ def send_geofence_command(latitude: float, longitude: float, radius: float, max_
     Max altitude is sent in millimeters.
     """
     if SIM_MODE:
-        print(f"[listener] SIM_MODE=ON — accepted GEOFENCE command (simulated)")
+        print("[listener] SIM_MODE=ON — accepted GEOFENCE command (simulated)")
         return True, "GEOFENCE accepted in simulator mode"
 
     # Convert to integer format (degrees * 1e7)
@@ -260,7 +390,7 @@ def run_sim_mode():
 # REAL MODE — read from RAK4630 base station over USB serial
 # ---------------------------------------------------------------------------
 def auto_detect_port() -> str:
-    return "COM9"
+    return "/dev/tty.usbmodem1101"
 
 def run_serial_mode():
     global active_serial
@@ -296,8 +426,19 @@ def run_serial_mode():
 
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    args = parse_args()
+    DEMO_SCENARIO = select_demo_scenario(args)
+
+    if args.sim:
+        SIM_MODE = 1
+    elif args.serial:
+        SIM_MODE = 0
+
     start_control_server()
-    if SIM_MODE:
+
+    if DEMO_SCENARIO is not None:
+        run_demo_mode(DEMO_SCENARIO)
+    elif SIM_MODE:
         run_sim_mode()
     else:
         run_serial_mode()
