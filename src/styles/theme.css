@@ -313,6 +313,17 @@ body {
     box-shadow: var(--shadow-glow-red);
 }
 
+.btn-secondary {
+    background: #e2e8f0;
+    color: #334155;
+    border-color: #cbd5e1;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: #cbd5e1;
+    color: #1e293b;
+}
+
 .btn-ghost {
     background: transparent;
     color: var(--color-text-secondary);

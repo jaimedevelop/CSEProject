@@ -236,6 +236,7 @@ export default function Dashboard() {
                 <TelemetryCard label="Battery" value={fmt(data?.battery_pct ?? null, 1)} unit="%" level={batteryLevel(data?.battery_pct ?? null)} />
                 <TelemetryCard label="Signal (RSSI)" value={fmt(data?.rssi, 0)} unit="dBm" level={signalLevel(data?.rssi ?? null)} />
                 <TelemetryCard label="SNR" value={fmt(data?.snr, 1)} unit="dB" level={snrLevel(data?.snr ?? null)} />
+                <TelemetryCard label="SIV" value={fmt(data?.satellites_in_view ?? null, 0)} unit="sat" />
                 <TelemetryCard label="Pressure" value={fmt(data?.pressure_hpa, 1)} unit="hPa" />
                 <TelemetryCard label="Temperature" value={fmt(data?.temperature_c, 1)} unit="°C" />
                 <TelemetryCard label="Stability" value={fmt(data?.stability_index, 0)} unit="/100" />
