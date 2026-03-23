@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import Optional
 import os
 import math
+import time
 import requests
 from datetime import datetime, timedelta
 from uuid import uuid4
@@ -281,19 +282,44 @@ def relay_geofence_command(latitude: float, longitude: float, radius: float, max
     return listener_payload
 
 
+def relay_control_burst(path_suffix: str, command_name: str, count: int = 3, interval_seconds: float = 0.05) -> dict:
+    endpoint = listener_control_endpoint(path_suffix)
+    successes = 0
+    last_payload: dict = {}
+    last_error: Optional[str] = None
+
+    for i in range(max(1, count)):
+        try:
+            resp = requests.post(endpoint, timeout=3)
+            try:
+                payload = resp.json()
+            except ValueError:
+                payload = {"raw": resp.text}
+
+            if resp.status_code < 400:
+                successes += 1
+                last_payload = payload
+            else:
+                last_error = payload.get("error") or payload.get("message") or f"Listener rejected {command_name} command"
+        except requests.RequestException as e:
+            last_error = f"Listener control unavailable: {e}"
+
+        if i < count - 1:
+            time.sleep(interval_seconds)
+
+    return {
+        "status": "ok",
+        "message": f"{command_name} burst dispatched ({count} attempts)",
+        "listener": last_payload,
+        "attempts": count,
+        "successful_attempts": successes,
+        "failed_attempts": count - successes,
+        "last_error": last_error,
+    }
+
+
 def relay_reset_command() -> dict:
-    listener_resp = requests.post(listener_control_endpoint("/control/reset"), timeout=3)
-
-    try:
-        listener_payload = listener_resp.json()
-    except ValueError:
-        listener_payload = {"raw": listener_resp.text}
-
-    if listener_resp.status_code >= 400:
-        detail = listener_payload.get("error") or listener_payload.get("message") or "Listener rejected RESET command"
-        raise HTTPException(status_code=listener_resp.status_code, detail=detail)
-
-    return listener_payload
+    return relay_control_burst("/control/reset", "RESET")
 
 
 # -------------------------------------------------------------------
@@ -499,39 +525,12 @@ async def get_flight_packets(flight_id: str):
 # POST /deflate for manual deflation command
 @app.post("/deflate")
 def deflate():
-    try:
-        listener_resp = requests.post(listener_control_endpoint("/control/pop"), timeout=3)
-    except requests.RequestException as e:
-        raise HTTPException(status_code=503, detail=f"Listener control unavailable: {e}") from e
-
-    try:
-        listener_payload = listener_resp.json()
-    except ValueError:
-        listener_payload = {"raw": listener_resp.text}
-
-    if listener_resp.status_code >= 400:
-        detail = listener_payload.get("error") or listener_payload.get("message") or "Listener rejected POP command"
-        raise HTTPException(status_code=listener_resp.status_code, detail=detail)
-
-    return {
-        "status": "ok",
-        "message": "Deflation command relayed",
-        "listener": listener_payload,
-    }
+    return relay_control_burst("/control/pop", "POP")
 
 
 @app.post("/reset")
 def reset_firmware():
-    try:
-        listener_payload = relay_reset_command()
-    except requests.RequestException as e:
-        raise HTTPException(status_code=503, detail=f"Listener control unavailable: {e}") from e
-
-    return {
-        "status": "ok",
-        "message": "Reset command relayed",
-        "listener": listener_payload,
-    }
+    return relay_reset_command()
 
 @app.post("/geofence")
 def set_geofence(cmd: GeofenceCommand):
