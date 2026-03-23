@@ -282,7 +282,7 @@ def relay_geofence_command(latitude: float, longitude: float, radius: float, max
     return listener_payload
 
 
-def relay_control_burst(path_suffix: str, command_name: str, count: int = 3, interval_seconds: float = 0.05) -> dict:
+def relay_control_burst(path_suffix: str, command_name: str, count: int = 1, interval_seconds: float = 0.05) -> dict:
     endpoint = listener_control_endpoint(path_suffix)
     successes = 0
     last_payload: dict = {}
@@ -525,7 +525,11 @@ async def get_flight_packets(flight_id: str):
 # POST /deflate for manual deflation command
 @app.post("/deflate")
 def deflate():
-    return relay_control_burst("/control/pop", "POP")
+    result = relay_control_burst("/control/pop", "POP", count=3, interval_seconds=0.25)
+    if result.get("successful_attempts", 0) == 0:
+        detail = result.get("last_error") or "Listener rejected POP command"
+        raise HTTPException(status_code=503, detail=detail)
+    return result
 
 
 @app.post("/reset")
