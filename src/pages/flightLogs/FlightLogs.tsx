@@ -7,6 +7,7 @@ import {
     fetchFlightPackets,
     fetchFlights,
     fetchFlightStatus,
+    getDisplayAltitudeMeters,
     startFlight,
     sendGeofence,
     setMapReplaySelection,
@@ -44,7 +45,7 @@ function fmtDuration(startIso: string, endIso?: string | null) {
 
 function exportCSV(packets: TelemetryPacket[], flightLabel: string) {
     const headers = [
-        'timestamp', 'latitude', 'longitude', 'altitude_m',
+        'timestamp', 'latitude', 'longitude', 'barometric_altitude_m',
         'temperature_c', 'pressure_hpa',
         'accel_x', 'accel_y', 'accel_z', 'tilt_deg', 'stability_index',
         'rssi', 'snr', 'satellites_in_view', 'wind_gust_mph', 'calculated_wind_gust_mph',
@@ -54,7 +55,10 @@ function exportCSV(packets: TelemetryPacket[], flightLabel: string) {
         p.timestamp,
         p.latitude.toFixed(6),
         p.longitude.toFixed(6),
-        p.altitude_m.toFixed(2),
+        (() => {
+            const altM = getDisplayAltitudeMeters(p);
+            return altM != null ? altM.toFixed(2) : '';
+        })(),
         p.temperature_c.toFixed(2),
         p.pressure_hpa.toFixed(2),
         p.accel_x.toFixed(3),
@@ -273,7 +277,12 @@ export default function FlightLogs() {
         return filtered.slice(start, start + PACKETS_PER_PAGE);
     }, [filtered, currentPage]);
 
-    const maxAltM = packets.length ? Math.max(...packets.map(p => p.altitude_m)) : null;
+    const maxAltM = useMemo(() => {
+        const alts = packets
+            .map(p => getDisplayAltitudeMeters(p))
+            .filter((alt): alt is number => alt != null);
+        return alts.length ? Math.max(...alts) : null;
+    }, [packets]);
     const minRSSI = packets.length ? Math.min(...packets.map(p => p.rssi ?? 0)) : null;
     const lastPacket = packets[packets.length - 1] ?? null;
 
@@ -416,7 +425,7 @@ export default function FlightLogs() {
                                 ) : paginatedPackets.map(p => {
                                     const key = p.timestamp;
                                     const isExpanded = expanded === key;
-                                    const altM = p.altitude_m;
+                                    const altM = getDisplayAltitudeMeters(p);
                                     const tilt = tiltAngle(p.accel_x, p.accel_y, p.accel_z);
                                     const rssiWarn = p.rssi != null && p.rssi < -95;
                                     const tiltWarn = tilt > 20;
@@ -439,8 +448,8 @@ export default function FlightLogs() {
                                                     {fmtTime(p.timestamp)}
                                                     {p.det && <span style={{ marginLeft: 'var(--space-1)' }}>🚨</span>}
                                                 </td>
-                                                <td style={{ padding: 'var(--space-2) var(--space-3)', color: altM > 5800 ? 'var(--color-warning)' : 'var(--color-text-primary)' }}>
-                                                    {altM.toFixed(1)}
+                                                <td style={{ padding: 'var(--space-2) var(--space-3)', color: (altM != null && altM > 5800) ? 'var(--color-warning)' : 'var(--color-text-primary)' }}>
+                                                    {altM != null ? altM.toFixed(1) : '--'}
                                                 </td>
                                                 <td style={{ padding: 'var(--space-2) var(--space-3)' }}>{p.temperature_c.toFixed(1)}</td>
                                                 <td style={{ padding: 'var(--space-2) var(--space-3)' }}>{p.pressure_hpa.toFixed(1)}</td>
@@ -474,7 +483,7 @@ export default function FlightLogs() {
                                                                 { k: 'Timestamp', v: p.timestamp },
                                                                 { k: 'Latitude', v: `${p.latitude.toFixed(6)}°` },
                                                                 { k: 'Longitude', v: `${p.longitude.toFixed(6)}°` },
-                                                                { k: 'Altitude', v: `${p.altitude_m.toFixed(2)} m` },
+                                                                { k: 'Altitude', v: altM != null ? `${altM.toFixed(2)} m` : '—' },
                                                                 { k: 'Temperature', v: `${p.temperature_c.toFixed(2)} °C` },
                                                                 { k: 'Pressure', v: `${p.pressure_hpa.toFixed(2)} hPa` },
                                                                 { k: 'Accel X', v: `${p.accel_x.toFixed(3)} m/s²` },

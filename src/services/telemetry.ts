@@ -96,6 +96,38 @@ export function todayDateString(): string {
 
 export const metersToFeet = (m: number) => m * 3.28084;
 
+export const GROUND_PRESSURE_STORAGE_KEY = 'dashboardGroundPressureHpa';
+
+export function calculateBarometricAltitudeMeters(
+    pressureHpa: number | null | undefined,
+    groundPressureHpa: number | null | undefined,
+): number | null {
+    if (pressureHpa == null || groundPressureHpa == null) return null;
+    if (pressureHpa <= 0 || groundPressureHpa <= 0) return null;
+    // International barometric formula for altitude relative to calibrated ground pressure.
+    return 44330 * (1 - Math.pow(pressureHpa / groundPressureHpa, 1 / 5.255));
+}
+
+export function getGroundPressureCalibration(): number | null {
+    const saved = localStorage.getItem(GROUND_PRESSURE_STORAGE_KEY);
+    if (!saved) return null;
+    const parsed = Number(saved);
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return parsed;
+}
+
+export function saveGroundPressureCalibration(pressureHpa: number): void {
+    localStorage.setItem(GROUND_PRESSURE_STORAGE_KEY, pressureHpa.toString());
+}
+
+export function getDisplayAltitudeMeters(
+    packet: Pick<TelemetryPacket, 'pressure_hpa'>,
+    groundPressureHpa?: number | null,
+): number | null {
+    const baseline = groundPressureHpa ?? getGroundPressureCalibration();
+    return calculateBarometricAltitudeMeters(packet.pressure_hpa, baseline);
+}
+
 /**
  * Derives a tilt angle (°) from accelerometer axes.
  * When the device is flat and upright, accel_z ≈ 9.8 m/s².

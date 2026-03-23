@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import '../../styles/theme.css';
 import {
+    getDisplayAltitudeMeters,
+    getGroundPressureCalibration,
     fetchLatestTelemetry,
+    saveGroundPressureCalibration,
     triggerFirmwareReset,
     triggerManualDeflation,
     tiltAngle,
@@ -54,14 +57,14 @@ function batteryLevel(v: number | null): Level {
     return 'nominal';
 }
 
-function overallStatus(d: TelemetryPacket | null): 'nominal' | 'warning' | 'critical' | 'unknown' {
+function overallStatus(d: TelemetryPacket | null, computedAltitudeM: number | null): 'nominal' | 'warning' | 'critical' | 'unknown' {
     if (!d) return 'unknown';
-    const altM = d.altitude_m;
+    const altM = computedAltitudeM;
     const tilt = tiltAngle(d.accel_x, d.accel_y, d.accel_z);
     if (d.rssi != null && d.rssi < -110) return 'critical';
     if (d.battery_pct != null && d.battery_pct < 10) return 'critical';
     if (
-        altM > ALT_WARN_M ||
+        (altM != null && altM > ALT_WARN_M) ||
         tilt > 45 ||
         (d.battery_pct != null && d.battery_pct < 20) ||
         (d.rssi != null && d.rssi < -95) ||
@@ -242,8 +245,17 @@ function ResetButton() {
 export default function Dashboard() {
     const [fetchState, setFetchState] = useState<FetchState>({ status: 'loading' });
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+    const [groundPressureHpa, setGroundPressureHpa] = useState<number | null>(null);
 
     const data = fetchState.status === 'ok' ? fetchState.data : null;
+    const computedAltitudeM = data ? getDisplayAltitudeMeters(data, groundPressureHpa) : null;
+
+    useEffect(() => {
+        const parsed = getGroundPressureCalibration();
+        if (parsed != null) {
+            setGroundPressureHpa(parsed);
+        }
+    }, []);
 
     const poll = useCallback(async () => {
         const result = await fetchLatestTelemetry();
@@ -253,14 +265,21 @@ export default function Dashboard() {
         }
     }, []);
 
+    const calibrateToGround = useCallback(() => {
+        if (data?.pressure_hpa == null) return;
+        const calibrated = Number(data.pressure_hpa);
+        setGroundPressureHpa(calibrated);
+        saveGroundPressureCalibration(calibrated);
+    }, [data]);
+
     useEffect(() => {
         poll();
         const interval = setInterval(poll, POLL_INTERVAL * 1000);
         return () => clearInterval(interval);
     }, [poll]);
 
-    const status = overallStatus(data);
-    const altM = data ? data.altitude_m : null;
+    const status = overallStatus(data, computedAltitudeM);
+    const altM = computedAltitudeM;
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', maxWidth: 1200 }}>
@@ -316,7 +335,7 @@ export default function Dashboard() {
                         {[
                             { label: 'Latitude', val: data ? `${data.latitude.toFixed(6)}°` : '--' },
                             { label: 'Longitude', val: data ? `${data.longitude.toFixed(6)}°` : '--' },
-                            { label: 'Altitude', val: altM != null ? `${altM.toFixed(1)} m` : '--' },
+                            { label: 'Barometric Altitude', val: altM != null ? `${altM.toFixed(1)} m` : '--' },
                         ].map(r => (
                             <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <span className="text-secondary text-sm">{r.label}</span>
@@ -330,6 +349,33 @@ export default function Dashboard() {
                         </div>
                     </div>
                 </div>
+            </div>
+
+            {/* ── Compact barometer calibration ── */}
+            <div
+                style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 'var(--space-3)',
+                    flexWrap: 'wrap',
+                    padding: 'var(--space-3) var(--space-4)',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 'var(--radius-md)',
+                    background: 'var(--color-bg-card)',
+                }}
+            >
+                <span className="text-sm text-secondary">
+                    Calibrated ground pressure: {groundPressureHpa != null ? `${groundPressureHpa.toFixed(2)} hPa` : 'Not calibrated'}
+                </span>
+                <button
+                    className="btn btn-secondary"
+                    onClick={calibrateToGround}
+                    disabled={data?.pressure_hpa == null}
+                    style={{ padding: 'var(--space-1) var(--space-3)', fontSize: 'var(--text-sm)' }}
+                >
+                    Calibrate
+                </button>
             </div>
 
             {/* ── Emergency Controls ── */}

@@ -6,6 +6,7 @@ import {
     fetchFlightPackets,
     fetchFlightStatus,
     fetchLatestTelemetry,
+    getDisplayAltitudeMeters,
     getMapReplaySelection,
     metersToFeet,
     setMapReplaySelection,
@@ -72,7 +73,7 @@ function RecenterOnPosition({ position, noData }: { position: LatLng; noData: bo
 
 interface LiveTileMapProps {
     position: LatLng;
-    altitudeFt: number;
+    altitudeFt: number | null;
     heading: number;
     trail: TrailPoint[];
     geofence: GeofenceConfig;
@@ -178,7 +179,7 @@ function LiveTileMap({ position, altitudeFt, heading, trail, geofence, cone, sho
                             pathOptions={{ color: '#ffffff', weight: 2, fillColor: '#2563eb', fillOpacity: 1 }}
                         >
                             <Tooltip direction="top" offset={[0, -8]}>
-                                Balloon · {feetToMeters(altitudeFt).toFixed(1)} m
+                                Balloon · {altitudeFt != null ? `${feetToMeters(altitudeFt).toFixed(1)} m` : '--'}
                             </Tooltip>
                         </CircleMarker>
                     </>
@@ -204,7 +205,7 @@ const DEFAULT_GEOFENCE: GeofenceConfig = {
 
 export default function Map() {
     const [position, setPosition] = useState<LatLng>(DEFAULT_CENTER);
-    const [altitudeFt, setAltitudeFt] = useState(0);
+    const [altitudeFt, setAltitudeFt] = useState<number | null>(null);
     const [heading, setHeading] = useState(0);
     const [trail, setTrail] = useState<TrailPoint[]>([]);
     
@@ -238,7 +239,8 @@ export default function Map() {
 
     const applyPacket = useCallback((p: TelemetryPacket) => {
         const newPos: LatLng = { lat: p.latitude, lng: p.longitude };
-        const newAlt = metersToFeet(p.altitude_m);
+        const baroAltM = getDisplayAltitudeMeters(p);
+        const newAlt = baroAltM != null ? metersToFeet(baroAltM) : null;
 
         // Prefer onboard heading when available; fallback to track-derived heading.
         if (p.heading_deg != null) {
@@ -306,7 +308,8 @@ export default function Map() {
 
         const latestPos: LatLng = { lat: latest.latitude, lng: latest.longitude };
         setPosition(latestPos);
-        setAltitudeFt(metersToFeet(latest.altitude_m));
+        const baroAltM = getDisplayAltitudeMeters(latest);
+        setAltitudeFt(baroAltM != null ? metersToFeet(baroAltM) : null);
         if (latest.heading_deg != null) {
             const wrapped = ((latest.heading_deg % 360) + 360) % 360;
             setHeading(wrapped);
@@ -353,7 +356,8 @@ export default function Map() {
 
         const latestPos: LatLng = { lat: latest.latitude, lng: latest.longitude };
         setPosition(latestPos);
-        setAltitudeFt(metersToFeet(latest.altitude_m));
+        const baroAltM = getDisplayAltitudeMeters(latest);
+        setAltitudeFt(baroAltM != null ? metersToFeet(baroAltM) : null);
         if (latest.heading_deg != null) {
             const wrapped = ((latest.heading_deg % 360) + 360) % 360;
             setHeading(wrapped);
@@ -422,10 +426,11 @@ export default function Map() {
     })();
 
     const isWithinGeofence = distanceFromCenter != null && distanceFromCenter <= geofence.radiusFt;
-    const isWithinAltitude = altitudeFt <= geofence.maxAltitude;
+    const isWithinAltitude = altitudeFt != null ? altitudeFt <= geofence.maxAltitude : null;
 
     const handleShowCone = () => {
-        setCone({ center: position, radiusFt: 300 + altitudeFt * 0.05, active: true });
+        const altitudeForCone = altitudeFt ?? 0;
+        setCone({ center: position, radiusFt: 300 + altitudeForCone * 0.05, active: true });
         setShowCone(true);
     };
 
@@ -512,7 +517,9 @@ export default function Map() {
                     <div style={{ marginTop: 'var(--space-2)', display: 'flex', flexDirection: 'column', gap: 4 }}>
                         <span className="font-mono text-sm">{noData ? '--' : `${position.lat.toFixed(6)}° N`}</span>
                         <span className="font-mono text-sm">{noData ? '--' : `${Math.abs(position.lng).toFixed(6)}° W`}</span>
-                        <span className="font-mono text-sm">{noData ? '--' : `${feetToMeters(altitudeFt).toFixed(1)} m AGL`}</span>
+                        <span className="font-mono text-sm">
+                            {noData ? '--' : altitudeFt != null ? `${feetToMeters(altitudeFt).toFixed(1)} m AGL (baro)` : '--'}
+                        </span>
                     </div>
                 </div>
 
@@ -536,8 +543,8 @@ export default function Map() {
                                             <span className="text-xs" style={{ color: isWithinGeofence ? 'var(--color-success)' : 'var(--color-danger)' }}>
                                                 {isWithinGeofence ? '✓ Radius OK' : '✗ Outside bound'}
                                             </span>
-                                            <span className="text-xs" style={{ color: isWithinAltitude ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                                                {isWithinAltitude ? '✓ Alt OK' : '✗ Too high'}
+                                            <span className="text-xs" style={{ color: isWithinAltitude == null ? 'var(--color-text-muted)' : isWithinAltitude ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                                {isWithinAltitude == null ? '⏳ Alt unknown (calibrate barometer)' : isWithinAltitude ? '✓ Alt OK' : '✗ Too high'}
                                             </span>
                                         </div>
                                     </>
