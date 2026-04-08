@@ -49,6 +49,28 @@ function feetToMeters(feet: number): number {
     return feet / 3.28084;
 }
 
+function mphToFeetPerSecond(mph: number): number {
+    return mph * 1.46667;
+}
+
+function calculatePredictionConeRadiusFt(altitudeFt: number, windMph: number): number {
+    // Estimate drift radius from descent time and wind, then clamp to sane display bounds.
+    const safeAltitudeFt = Math.max(0, altitudeFt);
+    const safeWindMph = Math.max(0, windMph);
+    const descentRateFtPerSecond = 18;
+    const descentTimeSeconds = safeAltitudeFt / descentRateFtPerSecond;
+    const driftFeet = mphToFeetPerSecond(safeWindMph) * descentTimeSeconds;
+    const radiusFt = 150 + driftFeet * 0.5 + safeAltitudeFt * 0.02;
+    return Math.min(20_000, Math.max(150, radiusFt));
+}
+
+function getCalculatedWindMph(packet: TelemetryPacket): number {
+    if (packet.calculated_wind_gust_mph != null) return packet.calculated_wind_gust_mph;
+    if (packet.wind_gust_mph != null) return packet.wind_gust_mph;
+    if (packet.speed_mps != null) return packet.speed_mps * 2.23694;
+    return 0;
+}
+
 function projectHeadingPoint(origin: LatLng, headingDeg: number, distanceFt: number): LatLng {
     const distanceDegLat = distanceFt / 364_000;
     const rad = (headingDeg * Math.PI) / 180;
@@ -227,15 +249,36 @@ export default function Map() {
         return DEFAULT_GEOFENCE;
     });
     
-    const [cone, setCone] = useState<PredictionCone>({ center: DEFAULT_CENTER, radiusFt: 60, active: false });
+    const [cone, setCone] = useState<PredictionCone>({ center: DEFAULT_CENTER, radiusFt: 0, active: false });
     const [showTrail, setShowTrail] = useState(true);
     const [showCone, setShowCone] = useState(true);
     const [showGeofence, setShowGeofence] = useState(true);
     const [noData, setNoData] = useState(true);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+    const [activeFlightId, setActiveFlightId] = useState<string | null>(null);
     const [activeFlightName, setActiveFlightName] = useState<string | null>(null);
     const [replayFlightName, setReplayFlightName] = useState<string | null>(null);
     const prevPos = useRef<LatLng | null>(null);
+    const coneSourceKeyRef = useRef<string | null>(null);
+
+    const resetPredictionCone = useCallback(() => {
+        coneSourceKeyRef.current = null;
+        setCone({ center: DEFAULT_CENTER, radiusFt: 0, active: false });
+    }, []);
+
+    const initializePredictionCone = useCallback((packet: TelemetryPacket, sourceKey: string) => {
+        setCone(prev => {
+            if (prev.active) return prev;
+            coneSourceKeyRef.current = sourceKey;
+            const packetAltitudeFt = metersToFeet(packet.altitude_m);
+            const windMph = getCalculatedWindMph(packet);
+            return {
+                center: { lat: packet.latitude, lng: packet.longitude },
+                radiusFt: calculatePredictionConeRadiusFt(packetAltitudeFt, windMph),
+                active: true,
+            };
+        });
+    }, []);
 
     const applyPacket = useCallback((p: TelemetryPacket) => {
         const newPos: LatLng = { lat: p.latitude, lng: p.longitude };
@@ -261,6 +304,10 @@ export default function Map() {
         setNoData(false);
         prevPos.current = newPos;
 
+        if (p.det && activeFlightId) {
+            initializePredictionCone(p, `live:${activeFlightId}`);
+        }
+
         // If geofence is at default (0,0,0,0), initialize it to balloon position with 0 radius/altitude
         setGeofence(prev => {
             if (prev.center.lat === 0 && prev.center.lng === 0 && prev.radiusFt === 0 && prev.maxAltitude === 0) {
@@ -272,13 +319,15 @@ export default function Map() {
             }
             return prev;
         });
-    }, []);
+    }, [activeFlightId, initializePredictionCone]);
 
     const syncCurrentFlightTrail = useCallback(async () => {
         const active = await fetchFlightStatus();
         if (!active) {
+            setActiveFlightId(null);
             setActiveFlightName(null);
             setTrail([]);
+            resetPredictionCone();
             setGeofence(prev => {
                 const center = prevPos.current ?? { lat: 0, lng: 0 };
                 if (
@@ -298,10 +347,21 @@ export default function Map() {
             return;
         }
 
+        const sourceKey = `live:${active.id}`;
+        if (coneSourceKeyRef.current && coneSourceKeyRef.current !== sourceKey) {
+            resetPredictionCone();
+        }
+
+        setActiveFlightId(active.id);
         setActiveFlightName(active.name);
         const { packets } = await fetchFlightPackets(active.id);
         const fullTrail = packets.map(p => ({ lat: p.latitude, lng: p.longitude, det: Boolean(p.det) }));
         setTrail(fullTrail);
+
+        const firstDetPacket = packets.find(p => Boolean(p.det));
+        if (firstDetPacket) {
+            initializePredictionCone(firstDetPacket, sourceKey);
+        }
 
         const latest = packets[packets.length - 1];
         if (!latest) return;
@@ -319,21 +379,34 @@ export default function Map() {
         setLastUpdated(Number.isNaN(ts.getTime()) ? new Date() : ts);
         setNoData(false);
         prevPos.current = latestPos;
-    }, []);
+    }, [initializePredictionCone, resetPredictionCone]);
 
     const syncReplayFlight = useCallback(async (flightId: string) => {
         const { flight, packets } = await fetchFlightPackets(flightId);
         if (!flight) {
             setMapReplaySelection(null);
             setReplayFlightName(null);
+            setActiveFlightId(null);
+            resetPredictionCone();
             return;
         }
 
+        const sourceKey = `replay:${flight.id}`;
+        if (coneSourceKeyRef.current && coneSourceKeyRef.current !== sourceKey) {
+            resetPredictionCone();
+        }
+
         setReplayFlightName(flight.name);
+        setActiveFlightId(null);
         setActiveFlightName(null);
 
         const fullTrail = packets.map(p => ({ lat: p.latitude, lng: p.longitude, det: Boolean(p.det) }));
         setTrail(fullTrail);
+
+        const firstDetPacket = packets.find(p => Boolean(p.det));
+        if (firstDetPacket) {
+            initializePredictionCone(firstDetPacket, sourceKey);
+        }
 
         if (
             flight.geofence_latitude != null &&
@@ -366,7 +439,7 @@ export default function Map() {
         setLastUpdated(Number.isNaN(ts.getTime()) ? new Date() : ts);
         setNoData(false);
         prevPos.current = latestPos;
-    }, []);
+    }, [initializePredictionCone, resetPredictionCone]);
 
     const pollLiveMarker = useCallback(async () => {
         const result = await fetchLatestTelemetry();
@@ -437,6 +510,7 @@ export default function Map() {
     const handleExitReplay = () => {
         setMapReplaySelection(null);
         setReplayFlightName(null);
+        resetPredictionCone();
     };
 
     return (
@@ -471,9 +545,6 @@ export default function Map() {
                             {label}
                         </button>
                     ))}
-                    <button className="btn btn-sm btn-danger" onClick={handleShowCone}>
-                        Show Prediction Cone
-                    </button>
                 </div>
             </div>
 
@@ -564,7 +635,7 @@ export default function Map() {
                                 <span className="text-xs" style={{ color: 'var(--color-info)', marginTop: 4 }}>95% confidence</span>
                             </>
                         ) : (
-                            <span className="text-secondary text-sm">Not active · click "Show Prediction Cone"</span>
+                            <span className="text-secondary text-sm">Not active · waiting for first det=true packet</span>
                         )}
                     </div>
                 </div>

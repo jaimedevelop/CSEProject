@@ -415,7 +415,7 @@ def run_sim_mode():
 # REAL MODE — read from RAK4630 base station over USB serial
 # ---------------------------------------------------------------------------
 def auto_detect_port() -> str:
-    return "/dev/tty.usbmodem1101"
+    return "COM9"
 
 def run_serial_mode():
     global active_serial
