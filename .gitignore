@@ -118,3 +118,4 @@ dist-ssr
 *.pyc
 
 *.db
+src/backend/__pycache__/

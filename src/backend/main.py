@@ -25,6 +25,12 @@ app.add_middleware(
 
 LISTENER_CONTROL_URL = os.environ.get("LISTENER_CONTROL_URL", "http://127.0.0.1:8765/control/pop")
 
+# Wind model constants (payload-only aerodynamic model).
+WIND_EFFECTIVE_MASS_KG = 0.370
+WIND_DRAG_COEFFICIENT = 1.05
+WIND_REFERENCE_AREA_M2 = 0.0161
+STANDARD_GRAVITY_MPS2 = 9.81
+
 
 def listener_control_endpoint(path_suffix: str) -> str:
     return LISTENER_CONTROL_URL.replace("/control/pop", path_suffix)
@@ -208,23 +214,40 @@ def serialize_packet(p: TelemetryPacketDB) -> dict:
     }
 
 
+def calculate_tilt_angle_degrees(packet: TelemetryPacket) -> float:
+    """Estimate payload tilt angle from the accelerometer vector."""
+    horizontal = math.sqrt((packet.accel_x ** 2) + (packet.accel_y ** 2))
+    vertical = abs(packet.accel_z)
+    return math.degrees(math.atan2(horizontal, vertical))
+
+
+def estimate_air_density_kg_m3(altitude_m: float) -> float:
+    """Simple exponential atmosphere model for near-surface density."""
+    return 1.225 * math.exp(-max(0.0, altitude_m) / 8500.0)
+
+
 def calculate_wind_gust_mph(packet: TelemetryPacket) -> float:
-    """Estimate gust intensity from GPS speed and non-gravity acceleration."""
-    speed_mph = max(0.0, (packet.speed_mps or 0.0) * 2.23694)
-    accel_mag = math.sqrt((packet.accel_x ** 2) + (packet.accel_y ** 2) + (packet.accel_z ** 2))
+    """Estimate wind speed from payload tilt using aerodynamic drag balance.
 
-    # Payloads may report accel in g (~1.0 at rest) or m/s^2 (~9.81 at rest).
-    # Normalize to deviation-from-1g to avoid false large gusts when units are g.
-    if accel_mag <= 3.0:
-        accel_deviation_g = abs(accel_mag - 1.0)
-    else:
-        accel_deviation_g = abs((accel_mag / 9.81) - 1.0)
+    F_drag = 0.5 * rho * Cd * A * v^2
+    F_drag = F_restoring * tan(theta)
+    """
+    tilt_degrees = calculate_tilt_angle_degrees(packet)
+    # Keep angle below 90 degrees to avoid infinite tan(theta).
+    tilt_radians = math.radians(max(0.0, min(85.0, tilt_degrees)))
+    if tilt_radians <= 1e-6:
+        return 0.0
 
-    # Convert acceleration disturbance to an equivalent gust contribution.
-    accel_component_mph = accel_deviation_g * 18.0
-    calc_gust = speed_mph + accel_component_mph
+    restoring_force_n = WIND_EFFECTIVE_MASS_KG * STANDARD_GRAVITY_MPS2
+    drag_force_n = restoring_force_n * math.tan(tilt_radians)
+    air_density = estimate_air_density_kg_m3(packet.altitude_m)
 
-    return round(calc_gust, 1)
+    denom = air_density * WIND_DRAG_COEFFICIENT * WIND_REFERENCE_AREA_M2
+    if denom <= 0.0:
+        return 0.0
+
+    speed_mps = math.sqrt(max(0.0, (2.0 * drag_force_n) / denom))
+    return round(max(0.0, speed_mps * 2.23694), 1)
 
 
 def compute_pressure_drop_3h_mb(db, flight_id: str, current_pressure_hpa: float) -> float:
@@ -344,8 +367,8 @@ async def receive_telemetry(packet: TelemetryPacket):
     # Save to database
     db = SessionLocal()
     try:
-        calculated_wind_gust_mph = calculate_wind_gust_mph(packet)
         active_flight = get_active_flight(db)
+        calculated_wind_gust_mph = calculate_wind_gust_mph(packet)
 
         pressure_drop_3h_mb = 0.0
         pressure_drop_warning = False

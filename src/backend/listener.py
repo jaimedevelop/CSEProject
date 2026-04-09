@@ -151,10 +151,10 @@ def build_demo_packet(scenario: str) -> dict:
         packet["pressure_drop_3h_mb"] = 4.6
         packet["pressure_drop_warning"] = True
     elif scenario == SCENARIO_WIND40:
-        packet["speed_mps"] = 20.0
-        packet["accel_x"] = 0.0
+        packet["speed_mps"] = 0.0
+        packet["accel_x"] = 9.5
         packet["accel_y"] = 0.0
-        packet["accel_z"] = 9.81
+        packet["accel_z"] = 2.6
 
     return packet
 
