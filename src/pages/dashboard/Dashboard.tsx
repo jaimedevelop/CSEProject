@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import '../../styles/theme.css';
 import {
+    clearGroundPressureCalibration,
     getDisplayAltitudeMeters,
     getGroundPressureCalibration,
     fetchLatestTelemetry,
@@ -246,6 +247,7 @@ export default function Dashboard() {
     const [fetchState, setFetchState] = useState<FetchState>({ status: 'loading' });
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
     const [groundPressureHpa, setGroundPressureHpa] = useState<number | null>(null);
+    const [groundPressureInput, setGroundPressureInput] = useState('');
 
     const data = fetchState.status === 'ok' ? fetchState.data : null;
     const computedAltitudeM = data ? getDisplayAltitudeMeters(data, groundPressureHpa) : null;
@@ -254,6 +256,7 @@ export default function Dashboard() {
         const parsed = getGroundPressureCalibration();
         if (parsed != null) {
             setGroundPressureHpa(parsed);
+            setGroundPressureInput(parsed.toFixed(2));
         }
     }, []);
 
@@ -269,8 +272,22 @@ export default function Dashboard() {
         if (data?.pressure_hpa == null) return;
         const calibrated = Number(data.pressure_hpa);
         setGroundPressureHpa(calibrated);
+        setGroundPressureInput(calibrated.toFixed(2));
         saveGroundPressureCalibration(calibrated);
     }, [data]);
+
+    const applyManualGroundPressure = useCallback(() => {
+        const parsed = Number(groundPressureInput);
+        if (!Number.isFinite(parsed) || parsed <= 0) return;
+        setGroundPressureHpa(parsed);
+        saveGroundPressureCalibration(parsed);
+    }, [groundPressureInput]);
+
+    const clearManualGroundPressure = useCallback(() => {
+        setGroundPressureHpa(null);
+        setGroundPressureInput('');
+        clearGroundPressureCalibration();
+    }, []);
 
     useEffect(() => {
         poll();
@@ -376,6 +393,39 @@ export default function Dashboard() {
                 >
                     Calibrate
                 </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+                    <input
+                        type="number"
+                        step="0.01"
+                        placeholder="Default ground hPa"
+                        value={groundPressureInput}
+                        onChange={(e) => setGroundPressureInput(e.target.value)}
+                        style={{
+                            minWidth: 170,
+                            padding: 'var(--space-1) var(--space-2)',
+                            border: '1px solid var(--color-border)',
+                            borderRadius: 'var(--radius-sm)',
+                            background: 'var(--color-bg-elevated)',
+                            color: 'var(--color-text-primary)',
+                            fontSize: 'var(--text-sm)',
+                        }}
+                    />
+                    <button
+                        className="btn btn-secondary"
+                        onClick={applyManualGroundPressure}
+                        disabled={groundPressureInput.trim().length === 0}
+                        style={{ padding: 'var(--space-1) var(--space-3)', fontSize: 'var(--text-sm)' }}
+                    >
+                        Apply
+                    </button>
+                    <button
+                        className="btn btn-ghost"
+                        onClick={clearManualGroundPressure}
+                        style={{ padding: 'var(--space-1) var(--space-3)', fontSize: 'var(--text-sm)' }}
+                    >
+                        Clear
+                    </button>
+                </div>
             </div>
 
             {/* ── Emergency Controls ── */}

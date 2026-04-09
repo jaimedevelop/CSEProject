@@ -120,6 +120,10 @@ export function saveGroundPressureCalibration(pressureHpa: number): void {
     localStorage.setItem(GROUND_PRESSURE_STORAGE_KEY, pressureHpa.toString());
 }
 
+export function clearGroundPressureCalibration(): void {
+    localStorage.removeItem(GROUND_PRESSURE_STORAGE_KEY);
+}
+
 export function getDisplayAltitudeMeters(
     packet: Pick<TelemetryPacket, 'pressure_hpa'>,
     groundPressureHpa?: number | null,

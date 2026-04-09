@@ -60,8 +60,8 @@ function calculatePredictionConeRadiusFt(altitudeFt: number, windMph: number): n
     const descentRateFtPerSecond = 18;
     const descentTimeSeconds = safeAltitudeFt / descentRateFtPerSecond;
     const driftFeet = mphToFeetPerSecond(safeWindMph) * descentTimeSeconds;
-    const radiusFt = 150 + driftFeet * 0.5 + safeAltitudeFt * 0.02;
-    return Math.min(20_000, Math.max(150, radiusFt));
+    const radiusFt = driftFeet * 0.5 + safeAltitudeFt * 0.02;
+    return Math.min(20_000, Math.max(0, radiusFt));
 }
 
 function getCalculatedWindMph(packet: TelemetryPacket): number {
@@ -152,13 +152,13 @@ function LiveTileMap({ position, altitudeFt, heading, trail, geofence, cone, sho
                     </Circle>
                 )}
 
-                {showCone && cone.active && (
+                {showCone && cone.active && cone.radiusFt > 0 && (
                     <Circle
                         center={[cone.center.lat, cone.center.lng]}
                         radius={feetToMeters(cone.radiusFt)}
                         pathOptions={{ color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.12, dashArray: '6 5' }}
                     >
-                        <Tooltip sticky>95% landing zone</Tooltip>
+                        <Tooltip sticky>Prediction cone</Tooltip>
                     </Circle>
                 )}
 
@@ -270,7 +270,8 @@ export default function Map() {
         setCone(prev => {
             if (prev.active) return prev;
             coneSourceKeyRef.current = sourceKey;
-            const packetAltitudeFt = metersToFeet(packet.altitude_m);
+            const packetAltitudeMeters = getDisplayAltitudeMeters(packet) ?? packet.altitude_m;
+            const packetAltitudeFt = metersToFeet(packetAltitudeMeters);
             const windMph = getCalculatedWindMph(packet);
             return {
                 center: { lat: packet.latitude, lng: packet.longitude },
@@ -501,12 +502,6 @@ export default function Map() {
     const isWithinGeofence = distanceFromCenter != null && distanceFromCenter <= geofence.radiusFt;
     const isWithinAltitude = altitudeFt != null ? altitudeFt <= geofence.maxAltitude : null;
 
-    const handleShowCone = () => {
-        const altitudeForCone = altitudeFt ?? 0;
-        setCone({ center: position, radiusFt: 300 + altitudeForCone * 0.05, active: true });
-        setShowCone(true);
-    };
-
     const handleExitReplay = () => {
         setMapReplaySelection(null);
         setReplayFlightName(null);
@@ -632,7 +627,7 @@ export default function Map() {
                             <>
                                 <span className="font-mono text-sm">Radius: ±{feetToMeters(cone.radiusFt).toFixed(0)} m</span>
                                 <span className="font-mono text-sm">{cone.center.lat.toFixed(5)}° N</span>
-                                <span className="text-xs" style={{ color: 'var(--color-info)', marginTop: 4 }}>95% confidence</span>
+                                <span className="text-xs" style={{ color: 'var(--color-info)', marginTop: 4 }}>Derived from first det=true packet</span>
                             </>
                         ) : (
                             <span className="text-secondary text-sm">Not active · waiting for first det=true packet</span>

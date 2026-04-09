@@ -282,7 +282,7 @@ def relay_geofence_command(latitude: float, longitude: float, radius: float, max
     return listener_payload
 
 
-def relay_control_burst(path_suffix: str, command_name: str, count: int = 1, interval_seconds: float = 0.05) -> dict:
+def relay_control_burst(path_suffix: str, command_name: str, count: int = 3, interval_seconds: float = 0.05) -> dict:
     endpoint = listener_control_endpoint(path_suffix)
     successes = 0
     last_payload: dict = {}
