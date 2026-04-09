@@ -86,7 +86,7 @@ def parse_args() -> argparse.Namespace:
     demo_group.add_argument(
         "--pressuredrop",
         action="store_true",
-        help="Emit demo telemetry for pressure-drop warning (>4 mb/3h and <1009 mb).",
+        help="Emit demo telemetry for pressure-drop warning (>1.5 mb/hour over 30 min).",
     )
     demo_group.add_argument(
         "--wind40",
@@ -149,7 +149,7 @@ def build_demo_packet(scenario: str) -> dict:
     elif scenario == SCENARIO_PRESSURE_DROP:
         packet["pressure_hpa"] = 1008.0
         packet["pressure_drop_rate_mb_per_hr"] = 1.8
-        packet["pressure_drop_warning"] = True
+        packet["pressure_drop_warning"] = packet["pressure_drop_rate_mb_per_hr"] > 1.5
     elif scenario == SCENARIO_WIND40:
         packet["speed_mps"] = 0.0
         packet["accel_x"] = 9.5
