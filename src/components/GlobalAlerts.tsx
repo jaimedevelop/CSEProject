@@ -56,7 +56,7 @@ function deriveGlobalAlerts(d: TelemetryPacket): Alert[] {
         alerts.push({
             id: 'pres-drop-warn',
             level: 'warning',
-            message: `Pressure drop warning: ${fmt(d.pressure_drop_3h_mb ?? null, 1)} mb over 3h and current pressure ${d.pressure_hpa.toFixed(1)} mb (<1009 mb).`,
+            message: `Pressure drop warning: ${fmt(d.pressure_drop_rate_mb_per_hr ?? null, 2)} mb/hour over rolling 30 min (threshold 1.5 mb/hour).`,
         });
     }
 

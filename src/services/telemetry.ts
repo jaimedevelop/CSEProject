@@ -26,6 +26,7 @@ export interface TelemetryPacket {
     det_reason_text?: string | null;
     wind_gust_mph: number | null; // kept for simulator compat; may be null on real hardware
     calculated_wind_gust_mph?: number | null;
+    pressure_drop_rate_mb_per_hr?: number | null;
     pressure_drop_3h_mb?: number | null;
     pressure_drop_warning?: boolean | null;
     wind_gust_warning?: boolean | null;

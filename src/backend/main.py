@@ -152,6 +152,7 @@ class TelemetryPacket(BaseModel):
     det_reason: Optional[int] = None
     det_reason_text: Optional[str] = None
     wind_gust_mph: Optional[float] = None  # simulator compatibility
+    pressure_drop_rate_mb_per_hr: Optional[float] = None
     pressure_drop_3h_mb: Optional[float] = None
     pressure_drop_warning: Optional[bool] = None
     wind_gust_warning: Optional[bool] = None
@@ -250,20 +251,28 @@ def calculate_wind_gust_mph(packet: TelemetryPacket) -> float:
     return round(max(0.0, speed_mps * 2.23694), 1)
 
 
-def compute_pressure_drop_3h_mb(db, flight_id: str, current_pressure_hpa: float) -> float:
-    three_hours_ago = datetime.utcnow() - timedelta(hours=3)
-    rows = db.query(TelemetryPacketDB.pressure_hpa).filter(
+def compute_pressure_drop_rate_mb_per_hr(db, flight_id: str, current_pressure_hpa: float) -> float:
+    window_start = datetime.utcnow() - timedelta(minutes=30)
+    baseline = db.query(TelemetryPacketDB.pressure_hpa, TelemetryPacketDB.created_at).filter(
         TelemetryPacketDB.flight_id == flight_id,
-        TelemetryPacketDB.created_at >= three_hours_ago,
+        TelemetryPacketDB.created_at >= window_start,
         TelemetryPacketDB.pressure_hpa.isnot(None),
-    ).all()
+    ).order_by(TelemetryPacketDB.created_at.asc()).first()
 
-    if not rows:
+    if not baseline:
         return 0.0
 
-    max_recent_pressure = max(float(r[0]) for r in rows if r[0] is not None)
-    drop = max_recent_pressure - current_pressure_hpa
-    return round(max(0.0, drop), 1)
+    baseline_pressure = float(baseline[0]) if baseline[0] is not None else None
+    baseline_time = baseline[1]
+    if baseline_pressure is None or baseline_time is None:
+        return 0.0
+
+    elapsed_hours = (datetime.utcnow() - baseline_time).total_seconds() / 3600.0
+    if elapsed_hours <= 0.0:
+        return 0.0
+
+    drop_mb = max(0.0, baseline_pressure - current_pressure_hpa)
+    return round(max(0.0, drop_mb / elapsed_hours), 2)
 
 
 def serialize_flight(flight: FlightDB, packet_count: int) -> dict:
@@ -370,20 +379,30 @@ async def receive_telemetry(packet: TelemetryPacket):
         active_flight = get_active_flight(db)
         calculated_wind_gust_mph = calculate_wind_gust_mph(packet)
 
-        pressure_drop_3h_mb = 0.0
+        pressure_drop_rate_mb_per_hr = 0.0
         pressure_drop_warning = False
-        if packet.pressure_drop_3h_mb is not None:
-            pressure_drop_3h_mb = float(packet.pressure_drop_3h_mb)
-            pressure_drop_warning = bool(packet.pressure_drop_warning)
+        if packet.pressure_drop_rate_mb_per_hr is not None:
+            pressure_drop_rate_mb_per_hr = max(0.0, float(packet.pressure_drop_rate_mb_per_hr))
+            if packet.pressure_drop_warning is not None:
+                pressure_drop_warning = bool(packet.pressure_drop_warning)
+            else:
+                pressure_drop_warning = pressure_drop_rate_mb_per_hr > 1.5
+        elif packet.pressure_drop_3h_mb is not None:
+            # Backward compatibility for old payloads that still send 3h drop.
+            pressure_drop_rate_mb_per_hr = max(0.0, float(packet.pressure_drop_3h_mb)) / 3.0
+            if packet.pressure_drop_warning is not None:
+                pressure_drop_warning = bool(packet.pressure_drop_warning)
+            else:
+                pressure_drop_warning = pressure_drop_rate_mb_per_hr > 1.5
         elif active_flight is not None:
-            pressure_drop_3h_mb = compute_pressure_drop_3h_mb(db, active_flight.id, packet.pressure_hpa)
-            pressure_drop_warning = pressure_drop_3h_mb > 4.0 and packet.pressure_hpa < 1009.0
+            pressure_drop_rate_mb_per_hr = compute_pressure_drop_rate_mb_per_hr(db, active_flight.id, packet.pressure_hpa)
+            pressure_drop_warning = pressure_drop_rate_mb_per_hr > 1.5
 
         wind_gust_warning = bool(packet.wind_gust_warning) if packet.wind_gust_warning is not None else (calculated_wind_gust_mph > 40.0)
 
         latest_telemetry = packet.model_dump()
         latest_telemetry["calculated_wind_gust_mph"] = calculated_wind_gust_mph
-        latest_telemetry["pressure_drop_3h_mb"] = pressure_drop_3h_mb
+        latest_telemetry["pressure_drop_rate_mb_per_hr"] = pressure_drop_rate_mb_per_hr
         latest_telemetry["pressure_drop_warning"] = pressure_drop_warning
         latest_telemetry["wind_gust_warning"] = wind_gust_warning
 

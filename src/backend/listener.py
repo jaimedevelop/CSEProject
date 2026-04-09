@@ -148,7 +148,7 @@ def build_demo_packet(scenario: str) -> dict:
         packet["rssi"] = -111
     elif scenario == SCENARIO_PRESSURE_DROP:
         packet["pressure_hpa"] = 1008.0
-        packet["pressure_drop_3h_mb"] = 4.6
+        packet["pressure_drop_rate_mb_per_hr"] = 1.8
         packet["pressure_drop_warning"] = True
     elif scenario == SCENARIO_WIND40:
         packet["speed_mps"] = 0.0
