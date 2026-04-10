@@ -266,9 +266,9 @@ export default function Map() {
         setCone({ center: DEFAULT_CENTER, radiusFt: 0, active: false });
     }, []);
 
-    const initializePredictionCone = useCallback((packet: TelemetryPacket, sourceKey: string) => {
+    const updatePredictionCone = useCallback((packet: TelemetryPacket, sourceKey: string, forceActivate = false) => {
         setCone(prev => {
-            if (prev.active) return prev;
+            if (!forceActivate && !prev.active) return prev;
             coneSourceKeyRef.current = sourceKey;
             const packetAltitudeMeters = getDisplayAltitudeMeters(packet) ?? packet.altitude_m;
             const packetAltitudeFt = metersToFeet(packetAltitudeMeters);
@@ -305,8 +305,8 @@ export default function Map() {
         setNoData(false);
         prevPos.current = newPos;
 
-        if (p.det && activeFlightId) {
-            initializePredictionCone(p, `live:${activeFlightId}`);
+        if (activeFlightId) {
+            updatePredictionCone(p, `live:${activeFlightId}`, Boolean(p.det));
         }
 
         // If geofence is at default (0,0,0,0), initialize it to balloon position with 0 radius/altitude
@@ -320,7 +320,7 @@ export default function Map() {
             }
             return prev;
         });
-    }, [activeFlightId, initializePredictionCone]);
+    }, [activeFlightId, updatePredictionCone]);
 
     const syncCurrentFlightTrail = useCallback(async () => {
         const active = await fetchFlightStatus();
@@ -361,11 +361,15 @@ export default function Map() {
 
         const firstDetPacket = packets.find(p => Boolean(p.det));
         if (firstDetPacket) {
-            initializePredictionCone(firstDetPacket, sourceKey);
+            updatePredictionCone(firstDetPacket, sourceKey, true);
         }
 
         const latest = packets[packets.length - 1];
         if (!latest) return;
+
+        if (firstDetPacket || cone.active) {
+            updatePredictionCone(latest, sourceKey, Boolean(firstDetPacket));
+        }
 
         const latestPos: LatLng = { lat: latest.latitude, lng: latest.longitude };
         setPosition(latestPos);
@@ -380,7 +384,7 @@ export default function Map() {
         setLastUpdated(Number.isNaN(ts.getTime()) ? new Date() : ts);
         setNoData(false);
         prevPos.current = latestPos;
-    }, [initializePredictionCone, resetPredictionCone]);
+    }, [cone.active, updatePredictionCone, resetPredictionCone]);
 
     const syncReplayFlight = useCallback(async (flightId: string) => {
         const { flight, packets } = await fetchFlightPackets(flightId);
@@ -406,7 +410,7 @@ export default function Map() {
 
         const firstDetPacket = packets.find(p => Boolean(p.det));
         if (firstDetPacket) {
-            initializePredictionCone(firstDetPacket, sourceKey);
+            updatePredictionCone(firstDetPacket, sourceKey, true);
         }
 
         if (
@@ -428,6 +432,10 @@ export default function Map() {
             return;
         }
 
+        if (firstDetPacket || cone.active) {
+            updatePredictionCone(latest, sourceKey, Boolean(firstDetPacket));
+        }
+
         const latestPos: LatLng = { lat: latest.latitude, lng: latest.longitude };
         setPosition(latestPos);
         const baroAltM = getDisplayAltitudeMeters(latest);
@@ -440,7 +448,7 @@ export default function Map() {
         setLastUpdated(Number.isNaN(ts.getTime()) ? new Date() : ts);
         setNoData(false);
         prevPos.current = latestPos;
-    }, [initializePredictionCone, resetPredictionCone]);
+    }, [cone.active, updatePredictionCone, resetPredictionCone]);
 
     const pollLiveMarker = useCallback(async () => {
         const result = await fetchLatestTelemetry();
