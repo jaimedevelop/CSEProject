@@ -16,7 +16,6 @@ interface AlertThresholds {
     signalWarnDbm: number; // default -110
     windGustMph: number; // default 40
     pressureDropMb: number; // default 4 (over 3 hrs)
-    pressureThreshMb: number; // default 1009
 }
 
 interface OperatorProfile {
@@ -46,7 +45,6 @@ const DEFAULT_SETTINGS: Settings = {
         signalWarnDbm: -110,
         windGustMph: 40,
         pressureDropMb: 4,
-        pressureThreshMb: 1009,
     },
     operator: {
         name: '',
@@ -299,17 +297,10 @@ export default function UserSettings() {
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)' }}>
                             <NumericField
                                 label="Pressure Drop Alert"
-                                hint="Alert if pressure drops more than this amount over 3 hours."
+                                hint="Alert if pressure drops at least this amount over 3 hours."
                                 value={thresholds.pressureDropMb}
                                 min={1} max={15} step={0.5} unit="mb / 3 hr"
                                 onChange={v => updateThresholds({ pressureDropMb: v })}
-                            />
-                            <NumericField
-                                label="Low Pressure Threshold"
-                                hint="Alert is only active when current pressure is below this value."
-                                value={thresholds.pressureThreshMb}
-                                min={970} max={1025} step={1} unit="mb"
-                                onChange={v => updateThresholds({ pressureThreshMb: v })}
                             />
                         </div>
                     </div>
@@ -332,7 +323,7 @@ export default function UserSettings() {
                                     { cond: 'Battery', val: `< ${thresholds.batteryCritPct}%`, action: 'Auto-deflate', color: 'var(--color-danger)' },
                                     { cond: 'Signal', val: `< ${thresholds.signalWarnDbm} dBm`, action: 'Alert', color: 'var(--color-warning)' },
                                     { cond: 'Wind Gust', val: `> ${thresholds.windGustMph} mph`, action: 'Alert', color: 'var(--color-warning)' },
-                                    { cond: 'Pressure Drop', val: `> ${thresholds.pressureDropMb} mb / 3 hr`, action: 'Alert', color: 'var(--color-warning)' },
+                                    { cond: 'Pressure Drop', val: `>= ${thresholds.pressureDropMb} mb / 3 hr`, action: 'Alert', color: 'var(--color-warning)' },
                                     { cond: 'Geofence', val: 'Boundary breach', action: 'Auto-deflate', color: 'var(--color-danger)' },
                                     { cond: 'Altitude', val: `> ${geofence.maxAltitude} ft`, action: 'Auto-deflate', color: 'var(--color-danger)' },
                                 ].map((row, i) => (
