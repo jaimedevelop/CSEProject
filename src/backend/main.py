@@ -275,6 +275,18 @@ def compute_pressure_drop_rate_mb_per_hr(db, flight_id: str, current_pressure_hp
     return round(max(0.0, drop_mb / elapsed_hours), 2)
 
 
+def has_min_pressure_history(db, flight_id: str, minimum_minutes: int = 30) -> bool:
+    first_sample_at = db.query(func.min(TelemetryPacketDB.created_at)).filter(
+        TelemetryPacketDB.flight_id == flight_id,
+        TelemetryPacketDB.pressure_hpa.isnot(None),
+    ).scalar()
+
+    if first_sample_at is None:
+        return False
+
+    return first_sample_at <= (datetime.utcnow() - timedelta(minutes=minimum_minutes))
+
+
 def serialize_flight(flight: FlightDB, packet_count: int) -> dict:
     return {
         "id": flight.id,
@@ -378,6 +390,9 @@ async def receive_telemetry(packet: TelemetryPacket):
     try:
         active_flight = get_active_flight(db)
         calculated_wind_gust_mph = calculate_wind_gust_mph(packet)
+        pressure_history_ready = False
+        if active_flight is not None:
+            pressure_history_ready = has_min_pressure_history(db, active_flight.id, minimum_minutes=30)
 
         pressure_drop_rate_mb_per_hr = 0.0
         pressure_drop_warning = False
@@ -397,6 +412,9 @@ async def receive_telemetry(packet: TelemetryPacket):
         elif active_flight is not None:
             pressure_drop_rate_mb_per_hr = compute_pressure_drop_rate_mb_per_hr(db, active_flight.id, packet.pressure_hpa)
             pressure_drop_warning = pressure_drop_rate_mb_per_hr > 1.5
+
+        if not pressure_history_ready:
+            pressure_drop_warning = False
 
         wind_gust_warning = bool(packet.wind_gust_warning) if packet.wind_gust_warning is not None else (calculated_wind_gust_mph > 40.0)
 
