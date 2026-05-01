@@ -27,16 +27,21 @@ BAUD_RATE   = int(os.environ.get("BAUD_RATE", "115200"))
 API_URL     = os.environ.get("API_URL", "http://127.0.0.1:8000/telemetry")
 CONTROL_HOST = os.environ.get("LISTENER_CONTROL_HOST", "127.0.0.1")
 CONTROL_PORT = int(os.environ.get("LISTENER_CONTROL_PORT", "8765"))
-DEMO_INTERVAL_S = float(os.environ.get("LISTENER_DEMO_INTERVAL", "2.0"))
+DEMO_INTERVAL_S = float(os.environ.get("LISTENER_DEMO_INTERVAL", "1.0"))
 # =============================================================================
 
 DEMO_SCENARIO: str | None = None
+DEMO_BASELINE_PACKETS = 4
+PRESSURE_DROP_STEADY_PACKETS = 15
+WIND40_GRADUAL_PACKETS = 12
+MANUAL_DEFLATE_DESCENT_PACKETS = 20
 
 SCENARIO_BAT20 = "bat20"
 SCENARIO_BAT5 = "bat5"
 SCENARIO_RSSI110 = "rssi110"
 SCENARIO_PRESSURE_DROP = "pressuredrop"
 SCENARIO_WIND40 = "wind40"
+SCENARIO_MANUAL_DEFLATE = "manualdeflate"
 
 DET_REASON_LABELS = {
     0: "NONE",
@@ -93,6 +98,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Emit demo telemetry for calculated wind gust alert (>40 mph).",
     )
+    demo_group.add_argument(
+        "--manualdeflate",
+        action="store_true",
+        help="Emit demo telemetry with det=true and a slow manual-deflation descent.",
+    )
 
     return parser.parse_args()
 
@@ -108,63 +118,148 @@ def select_demo_scenario(args: argparse.Namespace) -> str | None:
         return SCENARIO_PRESSURE_DROP
     if args.wind40:
         return SCENARIO_WIND40
+    if args.manualdeflate:
+        return SCENARIO_MANUAL_DEFLATE
     return None
 
 
-def build_demo_packet(scenario: str) -> dict:
+def cycle_value(values: list[float], packet_index: int) -> float:
+    return values[packet_index % len(values)]
+
+
+def build_demo_packet(scenario: str, packet_index: int) -> dict:
     # Base values stay realistic enough for dashboard visuals while remaining deterministic.
+    common_altitude_offsets = [0.0, 0.1, -0.1, 0.2, -0.2]
+    common_temperature_offsets = [0.0, 0.1, -0.1, 0.2, -0.2]
+    common_pressure_offsets = [0.0, 0.1, -0.1]
+    common_snr_offsets = [0.0, 0.1, -0.1, 0.2, -0.2]
+    common_rssi_offsets = [0, 1, -1, 0, -1]
+
+    alt_jitter = cycle_value(common_altitude_offsets, packet_index)
+    temp_jitter = cycle_value(common_temperature_offsets, packet_index)
+    pressure_jitter = cycle_value(common_pressure_offsets, packet_index)
+    snr_jitter = cycle_value(common_snr_offsets, packet_index)
+    rssi_jitter = int(cycle_value(common_rssi_offsets, packet_index))
+
     packet = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "latitude": 34.0219,
-        "longitude": -118.4814,
-        "altitude_m": 1240.0,
-        "temperature_c": -4.8,
+        "latitude": 27.865935,
+        "longitude": -82.241438,
+        "altitude_m": round(0.0 + alt_jitter, 1),
+        "temperature_c": round(42.0 + temp_jitter, 1),
         "humidity_pct": 42.0,
-        "pressure_hpa": 1011.4,
+        "pressure_hpa": round(1019.3 + pressure_jitter, 1),
         "accel_x": 0.12,
         "accel_y": -0.08,
         "accel_z": 9.79,
-        "rssi": -88,
-        "snr": 6.5,
+        "rssi": -45 + rssi_jitter,
+        "snr": round(12.0 + snr_jitter, 1),
         "speed_mps": 8.0,
         "heading_deg": 274.0,
-        "satellites_in_view": 11,
+        "satellites_in_view": 18,
         "battery_pct": 64.0,
-        "stability_index": 0.93,
+        "stability_index": round(99.0 + cycle_value([0.0, 0.4, -0.3, 0.2, -0.2], packet_index), 1),
         "det": False,
         "det_reason": 0,
         "det_reason_text": "NONE",
         "wind_gust_mph": None,
     }
 
+    in_baseline_phase = packet_index < DEMO_BASELINE_PACKETS
+    phase_index = packet_index - DEMO_BASELINE_PACKETS
+
     if scenario == SCENARIO_BAT20:
-        packet["battery_pct"] = 19.0
+        if in_baseline_phase:
+            packet["battery_pct"] = cycle_value([20.2, 20.1, 20.2], packet_index)
+        else:
+            packet["battery_pct"] = cycle_value([19.9, 19.8, 19.7, 19.8], phase_index)
     elif scenario == SCENARIO_BAT5:
-        packet["battery_pct"] = 4.0
-        packet["det"] = True
-        packet["det_reason"] = 2
-        packet["det_reason_text"] = "LOW_BATTERY"
+        if in_baseline_phase:
+            packet["battery_pct"] = cycle_value([5.3, 5.2, 5.3, 5.2, 5.1], packet_index)
+            packet["det"] = False
+            packet["det_reason"] = 0
+            packet["det_reason_text"] = "NONE"
+        else:
+            packet["battery_pct"] = cycle_value([4.9, 4.8, 4.7, 4.8, 4.0, 3.9], phase_index)
+            packet["det"] = True
+            packet["det_reason"] = 2
+            packet["det_reason_text"] = "LOW_BATTERY"
     elif scenario == SCENARIO_RSSI110:
-        packet["rssi"] = -111
+        if in_baseline_phase:
+            packet["rssi"] = int(cycle_value([-108, -107, -109, -108], packet_index))
+        else:
+            packet["rssi"] = int(cycle_value([-112, -114, -113, -115], phase_index))
     elif scenario == SCENARIO_PRESSURE_DROP:
-        packet["pressure_hpa"] = 1008.0
-        packet["pressure_drop_rate_mb_per_hr"] = 1.8
-        packet["pressure_drop_warning"] = packet["pressure_drop_rate_mb_per_hr"] > 1.5
+        if in_baseline_phase:
+            packet["pressure_hpa"] = round(cycle_value([1017.2, 1017.0, 1016.9, 1017.1], packet_index), 1)
+            packet["pressure_drop_rate_mb_per_hr"] = round(cycle_value([1.2, 1.3, 1.1, 1.25], packet_index), 2)
+            packet["pressure_drop_warning"] = False
+        elif phase_index < PRESSURE_DROP_STEADY_PACKETS:
+            # Keep pressure mostly steady for a while so the trend is visible before it drops.
+            packet["pressure_hpa"] = round(cycle_value([1017.1, 1017.0, 1016.9, 1017.0], phase_index), 1)
+            packet["pressure_drop_rate_mb_per_hr"] = round(cycle_value([1.15, 1.2, 1.1, 1.25], phase_index), 2)
+            packet["pressure_drop_warning"] = False
+        else:
+            drop_step = phase_index - PRESSURE_DROP_STEADY_PACKETS
+            # Gradually decrease pressure and increase drop rate to cross alert threshold over time.
+            pressure_base = 1016.8 - (0.08 * drop_step)
+            rate_base = 1.22 + (0.05 * drop_step)
+            packet["pressure_hpa"] = round(pressure_base + cycle_value([0.1, 0.0, -0.1, 0.0], phase_index), 1)
+            packet["pressure_drop_rate_mb_per_hr"] = round(min(2.1, rate_base + cycle_value([0.02, 0.0, -0.02, 0.01], phase_index)), 2)
+            packet["pressure_drop_warning"] = packet["pressure_drop_rate_mb_per_hr"] > 1.5
     elif scenario == SCENARIO_WIND40:
-        packet["speed_mps"] = 0.0
-        packet["accel_x"] = 9.5
-        packet["accel_y"] = 0.0
-        packet["accel_z"] = 2.6
+        if in_baseline_phase:
+            # Baseline: low tilt, normal speed, high stability
+            packet["speed_mps"] = cycle_value([3.0, 3.2, 2.9, 3.1], packet_index)
+            packet["accel_x"] = cycle_value([0.20, 0.25, 0.18, 0.22], packet_index)
+            packet["accel_y"] = cycle_value([0.15, 0.12, 0.18, 0.14], packet_index)
+            packet["accel_z"] = cycle_value([9.76, 9.73, 9.79, 9.75], packet_index)
+            packet["stability_index"] = round(98.5 + cycle_value([0.0, 0.3, -0.2, 0.1], packet_index), 1)
+        elif phase_index < WIND40_GRADUAL_PACKETS:
+            # Gradual transition: tilt increases, stability decreases linearly
+            ramp_step = phase_index / WIND40_GRADUAL_PACKETS
+            accel_x_base = 0.5 + (13.5 * ramp_step)  # Ramp from 0.5 to ~14.0 (≈50 mph)
+            stability_base = 98.0 - (50.0 * ramp_step)  # Ramp from 98 to ~48
+            packet["speed_mps"] = round(cycle_value([3.0, 3.2, 2.9, 3.1], phase_index), 1)
+            packet["accel_x"] = round(accel_x_base + cycle_value([0.3, 0.2, -0.3, 0.1], phase_index), 2)
+            packet["accel_y"] = cycle_value([0.3, 0.1, 0.2, 0.15], phase_index)
+            packet["accel_z"] = cycle_value([9.76, 9.73, 9.79, 9.75], phase_index)  # Keep normal gravity
+            packet["stability_index"] = round(stability_base + cycle_value([0.5, 0.0, -0.5, 0.2], phase_index), 1)
+        else:
+            # High wind alert phase: sustained high tilt, low stability
+            packet["speed_mps"] = cycle_value([3.1, 3.2, 3.0, 3.1], phase_index)
+            packet["accel_x"] = cycle_value([11.31, 12.61, 13.97, 12.90], phase_index)
+            packet["accel_y"] = cycle_value([0.2, 0.1, 0.15, 0.1], phase_index)
+            packet["accel_z"] = cycle_value([9.76, 9.73, 9.79, 9.75], phase_index)  # Keep normal gravity
+            packet["stability_index"] = round(47.0 + cycle_value([0.5, -0.5, 0.3, -0.2], phase_index), 1)
+    elif scenario == SCENARIO_MANUAL_DEFLATE:
+        descent_step = min(packet_index, MANUAL_DEFLATE_DESCENT_PACKETS)
+        altitude_base = 72.0 - (2.8 * descent_step)
+        pressure_base = 1019.3 + (0.33 * descent_step)  # Pressure increases as altitude decreases
+
+        packet["det"] = True
+        packet["det_reason"] = 1
+        packet["det_reason_text"] = "MANUAL_POP"
+        packet["altitude_m"] = round(max(0.0, altitude_base + cycle_value([0.2, 0.0, -0.2, 0.1], packet_index)), 1)
+        packet["pressure_hpa"] = round(pressure_base + cycle_value([0.1, 0.0, -0.1, 0.0], packet_index), 1)
+        packet["speed_mps"] = cycle_value([4.2, 4.0, 4.4, 4.1], packet_index)
+        packet["accel_x"] = cycle_value([0.4, 0.5, 0.3, 0.4], packet_index)
+        packet["accel_y"] = cycle_value([0.2, 0.1, 0.15, 0.1], packet_index)
+        packet["accel_z"] = cycle_value([9.76, 9.73, 9.79, 9.75], packet_index)
+        packet["battery_pct"] = cycle_value([63.8, 63.7, 63.9, 63.8], packet_index)
 
     return packet
 
 
 def run_demo_mode(scenario: str):
     print(f"[listener] DEMO_MODE=ON — scenario '{scenario}' (interval={DEMO_INTERVAL_S:.1f}s)")
+    print(f"[listener] Sending {DEMO_BASELINE_PACKETS} baseline packets before alert condition")
+    packet_index = 0
     try:
         while True:
-            packet = build_demo_packet(scenario)
+            packet = build_demo_packet(scenario, packet_index)
             post_packet(packet)
+            packet_index += 1
             time.sleep(DEMO_INTERVAL_S)
     except KeyboardInterrupt:
         print("[listener] Demo mode stopped.")

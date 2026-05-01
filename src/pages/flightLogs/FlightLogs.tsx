@@ -215,12 +215,17 @@ export default function FlightLogs() {
         );
 
         if (!geofenceResult.ok) {
-            // TODO: show error to user, but don't proceed with flight start
-            console.error('Geofence command failed:', geofenceResult.message);
-            setShowGeofenceModal(false);
-            setGeofenceSubmitting(false);
-            alert(`Geofence failed: ${geofenceResult.message}`);
-            return;
+            const missingSerial = geofenceResult.message.toLowerCase().includes('serial link is not connected');
+            if (!missingSerial) {
+                console.error('Geofence command failed:', geofenceResult.message);
+                setShowGeofenceModal(false);
+                setGeofenceSubmitting(false);
+                alert(`Geofence failed: ${geofenceResult.message}`);
+                return;
+            }
+
+            console.warn('Geofence command skipped (serial disconnected). Starting flight anyway.');
+            alert('Serial link is not connected. Flight will start, but geofence was not sent to firmware.');
         }
 
         // Then start the flight

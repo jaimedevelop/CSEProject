@@ -12,6 +12,7 @@
     "dev:listener:rssi110": "python src/backend/listener.py --rssi110",
     "dev:listener:pressuredrop": "python src/backend/listener.py --pressuredrop",
     "dev:listener:wind40": "python src/backend/listener.py --wind40",
+    "dev:listener:manualdeflate": "python src/backend/listener.py --manualdeflate",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },
